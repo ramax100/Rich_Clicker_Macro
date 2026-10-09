@@ -1,79 +1,174 @@
-# Rich Clicker Macro
+<div align="center">
+  <img src="./1000641516.png" alt="Rich Clicker Macro Logo" width="180" />
+  <h1>Rich Clicker Macro</h1>
+  <p>Auto clicker dan editor macro multi-aksi untuk Android.</p>
 
-Macro auto clicker Android multi-aksi dengan profil persisten. Editor menggunakan Accessibility Overlay sehingga tetap tampil dan macro tetap berjalan ketika pengguna berpindah aplikasi.
+  [![Version](https://img.shields.io/badge/version-0.6.3-4f46e5)](https://github.com/ramax100/Rich_Clicker_Macro/releases/latest)
+  [![Android](https://img.shields.io/badge/Android-8.0%2B-3DDC84?logo=android)](#persyaratan)
+  [![License](https://img.shields.io/badge/license-MIT-blue)](./LICENSE)
+  [![Free](https://img.shields.io/badge/price-100%25%20gratis-brightgreen)](#gratis-dan-bebas-dimodifikasi)
+</div>
 
-## Fitur versi 0.5 / 0.6.3
+## Tentang aplikasi
 
-### Branding v0.6.3
-- Nama aplikasi berubah menjadi **Rich Clicker Macro** tanpa mengganti package/signing key, sehingga tetap dapat memperbarui versi lama.
-- Tombol STOP darurat diperkecil menjadi 48×36 dp.
-- Foto karakter pengguna digunakan sebagai launcher icon dan logo halaman utama.
+**Rich Clicker Macro** adalah aplikasi Android untuk membuat rangkaian tap, long press, dan swipe yang berjalan berurutan di atas aplikasi lain. Setiap macro dapat disimpan sebagai profil, diulang, diberi countdown, serta dikontrol dari overlay atau Quick Settings.
 
-### Perbaikan audit v0.6.2
-- Data profil JSON yang rusak dicadangkan sebelum profil Recovery digunakan, sehingga data mentah tidak langsung hilang.
-- Interval lama ikut menjadi jeda antar-loop saat migrasi profil satu titik.
-- Long press/swipe panjang dibagi menjadi segmen maksimal 0,5 detik sehingga STOP dapat menghentikan kelanjutan aksi dengan latensi terbatas.
-- Dialog editor ditutup sebelum macro dimulai dari toolbar atau Quick Settings Tile.
-- State collapse/hide toolbar direset saat editor ditutup.
-- Pusat gesture dapat mencapai tepi layar dengan membiarkan setengah marker tetap terlihat.
-- Foldable/windowed menggunakan current WindowMetrics, bukan gabungan area maksimum yang mungkin tidak dapat dijangkau.
-- Import JSON dibatasi 2 MB untuk mencegah freeze/OOM.
-- Draft pengaturan dipertahankan saat Activity dibuat ulang dan disimpan sebelum berpindah profil.
-- Cleanup overlay membedakan view yang sudah terlepas agar tidak tersangkut permanen.
+Aplikasi bekerja melalui Android Accessibility Service. Layanan hanya menjalankan gesture setelah pengguna mengaktifkannya secara manual dan menekan tombol mulai. Aplikasi tidak membaca isi layar (`canRetrieveWindowContent=false`) dan tidak berjalan otomatis saat perangkat dinyalakan.
 
-### Perbaikan kompatibilitas v0.6.1
-- Batas drag memakai WindowMetrics penuh pada Android 11+ dan real display metrics pada Android 8–10.
-- Marker dan endpoint dapat ditarik sampai tepi kanan/bawah pada perangkat dengan resource metrics terbatas.
-- Toolbar dibatasi maksimal 260 dp dan enam kontrol utama dibagi menjadi dua baris agar tidak lebih lebar dari layar.
-- Toolbar dijepit ke batas layar selama digeser, bukan baru saat dilepas, sehingga tidak memantul ke kiri.
+## Gratis dan bebas dimodifikasi
 
-### Eksekusi
-- Tap, long press, dan swipe per titik.
-- Durasi long press/swipe custom 0,1–60 detik; long press minimal 0,6 detik.
-- Jumlah aksi per titik 1–1.000 kali.
-- Delay per titik dan jeda antar-loop custom.
-- Batas loop atau loop tanpa batas.
-- Countdown dan tombol STOP darurat.
-- Keep Screen On opsional per profil tanpa izin wake lock.
+Rich Clicker Macro sepenuhnya gratis:
 
-### Editor overlay
-- Titik tanpa batas jumlah buatan dengan pusat gesture presisi.
-- Endpoint swipe berwarna biru dan berlabel `E`, dapat digeser terpisah.
-- Reorder titik, input delay langsung, toolbar movable/collapsible.
-- Tombol `◉/○` untuk menyembunyikan atau menampilkan seluruh marker dan endpoint.
-- Posisi awal/akhir tersimpan sebagai koordinat relatif untuk rotasi layar.
-- Marker menjadi tidak dapat disentuh saat macro berjalan agar gesture diteruskan ke aplikasi di bawahnya.
+- Tanpa biaya pembelian.
+- Tanpa langganan atau fitur premium.
+- Tanpa iklan.
+- Source code tersedia dan bebas dipelajari, diubah, serta didistribusikan kembali berdasarkan [MIT License](./LICENSE).
 
-### Profil dan akses cepat
-- Buat, rename, pilih, hapus, serta autosave profil.
-- Import/export JSON schema v2; profil schema v1 tetap dapat diimpor.
-- Quick Settings Tile **Rich Clicker Macro** untuk mulai/berhenti macro yang sudah dimuat.
-- Jika belum ada profil dimuat, tile membuka aplikasi.
-- Panel utama dibagi menjadi Layanan, Profil, Eksekusi, Editor Macro, dan Data Profil.
+Anda boleh membuat fork atau versi modifikasi. Pertahankan pemberitahuan hak cipta dan lisensi saat mendistribusikan ulang source.
 
-## Cara menggunakan
+## Download
 
-1. Pasang APK dan aktifkan **Rich Clicker Macro** di Pengaturan Aksesibilitas.
-2. Tambahkan tile **Rich Clicker Macro** melalui editor Quick Settings Android jika ingin akses cepat.
-3. Pilih profil dan atur eksekusi, termasuk Keep Screen On.
-4. Tekan **Tampilkan Editor di Atas Aplikasi**, lalu buka aplikasi tujuan.
-5. Pilih titik dan ketuk tombol jenis aksi untuk berpindah `Tap → Tahan → Geser`.
-6. Untuk swipe, geser marker awal dan marker biru `E` sebagai tujuan.
-7. Ketuk durasi dan `×N` untuk memasukkan nilai langsung.
-8. Gunakan `◉/○` untuk hide/show marker, `▶` untuk mulai, serta `■` atau STOP untuk berhenti.
+Unduh APK terbaru melalui halaman [GitHub Releases](https://github.com/ramax100/Rich_Clicker_Macro/releases/latest).
 
-## Semantik waktu
+> APK dipasang melalui sideload dan dapat diperiksa oleh Google Play Protect. Jangan menonaktifkan proteksi perangkat. Pastikan APK berasal dari repository ini dan cocokkan checksum pada catatan release.
 
-- Pengulangan aksi pada titik yang sama memiliki jeda internal singkat 0,1 detik.
-- Setelah seluruh pengulangan titik selesai, delay titik diterapkan sebelum titik berikutnya.
-- Setelah titik terakhir selesai, jeda antar-loop menggantikan delay titik terakhir.
-- Durasi long press/swipe adalah waktu gesture, lalu delay baru dihitung setelah callback selesai.
+## Persyaratan
 
-## Keamanan dan stabilitas
+- Android 8.0 (API 26) atau lebih baru.
+- Accessibility Service harus diaktifkan secara manual.
+- Tidak memerlukan izin overlay umum atau izin penyimpanan umum.
 
-- Tile tidak mencoba mengaktifkan Accessibility Service sendiri.
-- Keep Screen On dilepas ketika berhenti, dibatalkan, selesai, atau layanan ditutup.
-- Callback generasi mencegah gesture lama melanjutkan macro setelah stop.
-- Dialog editor ditutup saat profil diganti atau layanan dihentikan.
-- Tidak membaca isi layar (`canRetrieveWindowContent=false`) dan tidak auto-start.
-- APK sideload dengan Accessibility Service dapat diperiksa Play Protect; jangan menonaktifkan proteksi perangkat.
+## Semua fitur
+
+### Macro multi-titik
+
+- Jumlah titik tidak dibatasi oleh aplikasi.
+- Urutan titik dapat diubah dengan tombol naik/turun.
+- Setelah titik terakhir, macro dapat kembali ke titik pertama.
+- Batas jumlah loop dapat diatur; nilai `0` berarti tanpa batas.
+- Jeda setiap titik dan jeda antar-loop dapat diatur terpisah.
+- Countdown 0–10 detik sebelum macro dimulai.
+- Jumlah pengulangan setiap titik: 1–1.000 kali.
+
+### Jenis aksi
+
+- **Tap:** satu sentuhan singkat.
+- **Long press:** tahan 0,6–60 detik.
+- **Swipe:** geser dari marker awal menuju marker endpoint `E` selama 0,1–60 detik.
+- Gesture panjang dibagi menjadi segmen maksimal 500 ms agar penghentian lebih responsif.
+
+### Overlay editor
+
+- Tetap tampil ketika berpindah ke aplikasi lain.
+- Marker kecil dengan pusat koordinat presisi.
+- Endpoint swipe berwarna biru dan berlabel `E`.
+- Marker serta endpoint dapat mencapai tepi layar.
+- Tombol `◉/○` untuk menyembunyikan atau menampilkan marker.
+- Toolbar dapat dipindahkan, diciutkan, dan dibuka kembali.
+- Toolbar responsif untuk perangkat dengan layar sempit.
+- Posisi disimpan sebagai koordinat relatif agar menyesuaikan rotasi layar.
+- Tombol STOP darurat berukuran ringkas.
+
+### Profil dan data
+
+- Buat, pilih, ubah nama, dan hapus profil.
+- Posisi, urutan, delay, jenis aksi, durasi, dan repeat tersimpan otomatis.
+- Import/export semua profil menggunakan JSON schema v2.
+- Profil schema v1 tetap kompatibel.
+- Nama hasil import yang sama diberi suffix agar profil lama tidak tertimpa.
+- File import dibatasi 2 MB untuk menjaga stabilitas.
+- Data profil rusak dicadangkan sebelum profil Recovery digunakan.
+
+### Kontrol dan stabilitas
+
+- Tombol mulai, berhenti, dan STOP darurat.
+- Quick Settings Tile untuk mulai/berhenti macro yang sudah dimuat.
+- Keep Screen On opsional selama macro berjalan.
+- Callback gesture mencegah urutan bertumpuk.
+- Draft pengaturan tetap tersedia saat layar berotasi.
+- Mendukung Android 8–15, foldable/windowed mode, dan berbagai ukuran layar melalui WindowMetrics/real display metrics.
+
+## Cara instalasi
+
+1. Buka [GitHub Releases](https://github.com/ramax100/Rich_Clicker_Macro/releases/latest).
+2. Download file APK pada release terbaru.
+3. Izinkan instalasi dari sumber tersebut melalui pengaturan Android jika diminta.
+4. Instal lalu buka **Rich Clicker Macro**.
+5. Tekan **Buka Pengaturan Aksesibilitas** dan aktifkan layanan **Rich Clicker Macro**.
+
+Untuk memperbarui aplikasi, instal APK versi baru di atas versi lama. Package name dan signing key dipertahankan agar data profil tetap tersedia.
+
+## Cara penggunaan
+
+1. Pilih atau buat profil macro.
+2. Atur delay default, jeda antar-loop, batas loop, countdown, dan Keep Screen On.
+3. Tekan **Simpan Pengaturan**.
+4. Tekan **Tampilkan Editor di Atas Aplikasi**.
+5. Buka aplikasi tujuan.
+6. Tambahkan dan geser marker ke posisi yang diinginkan.
+7. Pilih jenis aksi, durasi, jumlah pengulangan, dan delay setiap titik.
+8. Tekan `▶` untuk menjalankan macro.
+9. Gunakan `■`, tombol merah **STOP**, atau Quick Settings Tile untuk berhenti.
+
+## Kontrol overlay
+
+| Kontrol | Fungsi |
+|---|---|
+| `▶` | Memulai countdown dan macro |
+| `■` | Menghentikan macro |
+| `+` | Menambah titik |
+| `−` | Menghapus titik terpilih |
+| `↑` / `↓` | Mengubah urutan titik |
+| `◉` / `○` | Hide/show semua marker |
+| `×` | Menutup editor overlay |
+| Label delay | Membuka input delay langsung |
+| `Tap/Tahan/Geser` | Mengubah jenis aksi titik |
+| Label durasi | Mengatur durasi long press/swipe |
+| `×N` | Mengatur jumlah aksi pada titik |
+| Header `MACRO` | Geser untuk memindahkan, ketuk untuk collapse/expand |
+
+## Quick Settings Tile
+
+1. Buka panel Quick Settings Android.
+2. Pilih menu edit tile.
+3. Tambahkan tile **Rich Clicker**.
+4. Muat profil melalui aplikasi terlebih dahulu.
+5. Ketuk tile untuk mulai atau berhenti. Jika belum ada profil dimuat, tile membuka aplikasi.
+
+## Build dari source
+
+Persyaratan pengembangan:
+
+- JDK 17.
+- Android SDK 35.
+- Gradle wrapper yang tersedia di repository.
+
+```bash
+git clone https://github.com/ramax100/Rich_Clicker_Macro.git
+cd Rich_Clicker_Macro
+git checkout feature/rich-clicker-macro
+./gradlew assembleDebug
+```
+
+Jangan commit keystore, password signing, atau APK privat. Pola tersebut sudah dicantumkan dalam `.gitignore`.
+
+## Modifikasi dan kontribusi
+
+1. Fork repository.
+2. Buat branch fitur baru.
+3. Lakukan perubahan dan pengujian.
+4. Kirim pull request dengan ringkasan perubahan.
+
+Penggunaan Accessibility Service harus tetap transparan dan memerlukan tindakan pengguna. Jangan menambahkan fungsi tersembunyi, pencurian data, anti-ban, atau mekanisme untuk melewati proteksi aplikasi/perangkat.
+
+## Komunitas
+
+Gabung channel Telegram untuk informasi dan update:
+
+[![Telegram](https://img.shields.io/badge/Telegram-@ChRichStore-2CA5E0?logo=telegram&logoColor=white)](https://t.me/ChRichStore)
+
+**Channel:** [https://t.me/ChRichStore](https://t.me/ChRichStore)
+
+## Lisensi
+
+Source code dirilis dengan [MIT License](./LICENSE). Logo menggunakan gambar yang disediakan pemilik repository.

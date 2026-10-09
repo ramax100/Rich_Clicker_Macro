@@ -15,6 +15,7 @@ import android.widget.AdapterView
 import android.widget.ArrayAdapter
 import android.widget.Button
 import android.widget.EditText
+import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.Spinner
@@ -99,6 +100,13 @@ class MainActivity : Activity() {
             setPadding(dp(24), dp(48), dp(24), dp(32))
             setBackgroundColor(Color.rgb(248, 250, 252))
         }
+        content.addView(ImageView(this).apply {
+            setImageDrawable(applicationInfo.loadIcon(packageManager))
+            scaleType = ImageView.ScaleType.CENTER_CROP
+            contentDescription = "Logo Rich Clicker Macro"
+        }, LinearLayout.LayoutParams(dp(96), dp(96)).apply {
+            bottomMargin = dp(12)
+        })
         content.addView(TextView(this).apply {
             text = "Rich Clicker Macro"
             textSize = 30f
