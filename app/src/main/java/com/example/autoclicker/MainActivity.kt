@@ -26,7 +26,8 @@ import com.example.autoclicker.accessibility.AutoClickAccessibilityService
 import com.example.autoclicker.data.ClickPreferences
 import com.example.autoclicker.data.MacroProfile
 import com.example.autoclicker.data.MacroRepository
-import java.io.Reader
+import java.io.ByteArrayOutputStream
+import java.io.InputStream
 
 class MainActivity : Activity() {
     private lateinit var repository: MacroRepository
@@ -50,7 +51,7 @@ class MainActivity : Activity() {
         setContentView(createContentView())
         refreshProfiles(repository.getActiveProfile().name)
         savedInstanceState?.let(::restoreDraft)
-        if (repository.hasRecoveryBackup()) {
+        if (repository.consumeRecoveryNotice()) {
             Toast.makeText(
                 this,
                 "Data profil rusak diamankan sebagai backup; profil Recovery digunakan sementara.",
@@ -314,6 +315,7 @@ class MainActivity : Activity() {
             dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
                 if (input.text.toString().trim().isEmpty()) input.error = "Masukkan nama profil"
                 else {
+                    if (saveProfileSettings(showConfirmation = false, refreshUi = false) == null) return@setOnClickListener
                     val created = repository.createProfile(input.text.toString())
                     refreshProfiles(created.name)
                     dialog.dismiss()
@@ -377,7 +379,7 @@ class MainActivity : Activity() {
     private fun importProfiles(data: Intent) {
         val uri = data.data ?: return
         runCatching {
-            val json = contentResolver.openInputStream(uri)?.bufferedReader()?.use(::readBoundedText)
+            val json = contentResolver.openInputStream(uri)?.use(::readBoundedUtf8)
                 ?: error("Dokumen tidak dapat dibuka")
             repository.importJson(json)
         }.onSuccess {
@@ -386,18 +388,20 @@ class MainActivity : Activity() {
         }.onFailure { Toast.makeText(this, "Import gagal: ${it.message}", Toast.LENGTH_LONG).show() }
     }
 
-    private fun readBoundedText(reader: Reader): String {
-        val result = StringBuilder()
-        val buffer = CharArray(8_192)
+    private fun readBoundedUtf8(input: InputStream): String {
+        val result = ByteArrayOutputStream()
+        val buffer = ByteArray(8_192)
+        var totalBytes = 0
         while (true) {
-            val count = reader.read(buffer)
+            val count = input.read(buffer)
             if (count < 0) break
-            if (result.length + count > MAX_IMPORT_CHARS) {
+            totalBytes += count
+            if (totalBytes > MAX_IMPORT_BYTES) {
                 error("File profil terlalu besar; maksimum 2 MB")
             }
-            result.append(buffer, 0, count)
+            result.write(buffer, 0, count)
         }
-        return result.toString()
+        return result.toString(Charsets.UTF_8.name())
     }
 
     private fun refreshServiceStatus() {
@@ -468,7 +472,7 @@ class MainActivity : Activity() {
     companion object {
         private const val REQUEST_EXPORT = 1001
         private const val REQUEST_IMPORT = 1002
-        private const val MAX_IMPORT_CHARS = 2_000_000
+        private const val MAX_IMPORT_BYTES = 2_000_000
         private const val STATE_PROFILE_NAME = "draft_profile_name"
         private const val STATE_DEFAULT_DELAY = "draft_default_delay"
         private const val STATE_LOOP_DELAY = "draft_loop_delay"

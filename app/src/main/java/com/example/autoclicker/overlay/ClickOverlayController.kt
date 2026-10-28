@@ -26,6 +26,8 @@ import com.example.autoclicker.data.ClickPreferences
 import com.example.autoclicker.data.MacroPoint
 import com.example.autoclicker.data.MacroProfile
 import com.example.autoclicker.data.PointActionType
+import kotlin.math.ceil
+import kotlin.math.floor
 import kotlin.math.roundToInt
 
 class ClickOverlayController(
@@ -121,6 +123,8 @@ class ClickOverlayController(
     }
 
     fun onConfigurationChanged() {
+        val stoppedActiveMacro = runState != RunState.IDLE
+        if (stoppedActiveMacro) stopClicking()
         targets.forEach { holder ->
             applyNormalizedPosition(holder)
             runCatching { windowManager.updateViewLayout(holder.view, holder.params) }
@@ -132,6 +136,9 @@ class ClickOverlayController(
             }
         }
         controlsView?.post { clampToolbarToDisplay() }
+        if (stoppedActiveMacro) {
+            Toast.makeText(service, "Konfigurasi layar berubah; macro dihentikan", Toast.LENGTH_SHORT).show()
+        }
     }
 
     fun destroy() {
@@ -480,14 +487,13 @@ class ClickOverlayController(
         point.view.isActivePoint = true
         point.endView?.isActivePoint = true
         updateControls()
-        val location = IntArray(2)
-        point.view.getLocationOnScreen(location)
-        val x = location[0] + point.view.width / 2f
-        val y = location[1] + point.view.height / 2f
-        val endLocation = IntArray(2)
-        point.endView?.getLocationOnScreen(endLocation)
-        val endX = point.endView?.let { endLocation[0] + it.width / 2f } ?: x
-        val endY = point.endView?.let { endLocation[1] + it.height / 2f } ?: y
+        val bounds = displayBounds()
+        val maxX = maxCoordinate(bounds.width()).toFloat()
+        val maxY = maxCoordinate(bounds.height()).toFloat()
+        val x = point.normalizedX.coerceIn(0f, 1f) * maxX
+        val y = point.normalizedY.coerceIn(0f, 1f) * maxY
+        val endX = point.endNormalizedX.coerceIn(0f, 1f) * maxX
+        val endY = point.endNormalizedY.coerceIn(0f, 1f) * maxY
 
         val accepted = service.performAction(
             actionType = point.actionType,
@@ -1046,41 +1052,35 @@ class ClickOverlayController(
             PixelFormat.TRANSLUCENT
         ).apply {
             gravity = Gravity.TOP or Gravity.LEFT
-            x = (normalizedX.coerceIn(0f, 1f) * bounds.width() - size / 2f).roundToInt()
-                .coerceIn(-size / 2, bounds.width() - size / 2)
-            y = (normalizedY.coerceIn(0f, 1f) * bounds.height() - size / 2f).roundToInt()
-                .coerceIn(-size / 2, bounds.height() - size / 2)
+            x = markerOffset(normalizedX, bounds.width(), size)
+            y = markerOffset(normalizedY, bounds.height(), size)
         }
     }
 
     private fun applyNormalizedPosition(holder: TargetHolder) {
         val bounds = displayBounds()
-        holder.params.x = (holder.normalizedX * bounds.width() - holder.params.width / 2f).roundToInt()
-        holder.params.y = (holder.normalizedY * bounds.height() - holder.params.height / 2f).roundToInt()
-        clampTarget(holder)
+        holder.params.x = markerOffset(holder.normalizedX, bounds.width(), holder.params.width)
+        holder.params.y = markerOffset(holder.normalizedY, bounds.height(), holder.params.height)
     }
 
     private fun updateNormalizedPosition(holder: TargetHolder) {
         val bounds = displayBounds()
-        if (bounds.width() <= 0 || bounds.height() <= 0) return
-        holder.normalizedX = ((holder.params.x + holder.params.width / 2f) / bounds.width()).coerceIn(0f, 1f)
-        holder.normalizedY = ((holder.params.y + holder.params.height / 2f) / bounds.height()).coerceIn(0f, 1f)
+        holder.normalizedX = normalizedMarkerPosition(holder.params.x, bounds.width(), holder.params.width)
+        holder.normalizedY = normalizedMarkerPosition(holder.params.y, bounds.height(), holder.params.height)
     }
 
     private fun updateEndpointNormalizedPosition(holder: TargetHolder) {
         val params = holder.endParams ?: return
         val bounds = displayBounds()
-        if (bounds.width() <= 0 || bounds.height() <= 0) return
-        holder.endNormalizedX = ((params.x + params.width / 2f) / bounds.width()).coerceIn(0f, 1f)
-        holder.endNormalizedY = ((params.y + params.height / 2f) / bounds.height()).coerceIn(0f, 1f)
+        holder.endNormalizedX = normalizedMarkerPosition(params.x, bounds.width(), params.width)
+        holder.endNormalizedY = normalizedMarkerPosition(params.y, bounds.height(), params.height)
     }
 
     private fun applyEndpointNormalizedPosition(holder: TargetHolder) {
         val params = holder.endParams ?: return
         val bounds = displayBounds()
-        params.x = (holder.endNormalizedX * bounds.width() - params.width / 2f).roundToInt()
-        params.y = (holder.endNormalizedY * bounds.height() - params.height / 2f).roundToInt()
-        clampParams(params)
+        params.x = markerOffset(holder.endNormalizedX, bounds.width(), params.width)
+        params.y = markerOffset(holder.endNormalizedY, bounds.height(), params.height)
     }
 
     private fun clampTarget(holder: TargetHolder) {
@@ -1089,9 +1089,32 @@ class ClickOverlayController(
 
     private fun clampParams(params: WindowManager.LayoutParams) {
         val bounds = displayBounds()
-        params.x = params.x.coerceIn(-params.width / 2, bounds.width() - params.width / 2)
-        params.y = params.y.coerceIn(-params.height / 2, bounds.height() - params.height / 2)
+        params.x = params.x.coerceIn(markerMinOffset(params.width), markerMaxOffset(bounds.width(), params.width))
+        params.y = params.y.coerceIn(markerMinOffset(params.height), markerMaxOffset(bounds.height(), params.height))
     }
+
+    private fun markerOffset(normalized: Float, displaySize: Int, markerSize: Int): Int {
+        val desired = (normalized.coerceIn(0f, 1f) * maxCoordinate(displaySize) - markerSize / 2f).roundToInt()
+        return desired.coerceIn(markerMinOffset(markerSize), markerMaxOffset(displaySize, markerSize))
+    }
+
+    private fun normalizedMarkerPosition(offset: Int, displaySize: Int, markerSize: Int): Float {
+        val maximumCoordinate = maxCoordinate(displaySize)
+        if (maximumCoordinate == 0) return 0f
+        val minimumOffset = markerMinOffset(markerSize)
+        val maximumOffset = markerMaxOffset(displaySize, markerSize)
+        if (offset <= minimumOffset) return 0f
+        if (offset >= maximumOffset) return 1f
+        return ((offset + markerSize / 2f) / maximumCoordinate).coerceIn(0f, 1f)
+    }
+
+    private fun markerMinOffset(markerSize: Int): Int = ceil(-markerSize / 2f).toInt()
+
+    private fun markerMaxOffset(displaySize: Int, markerSize: Int): Int =
+        floor(maxCoordinate(displaySize) - markerSize / 2f).toInt()
+            .coerceAtLeast(markerMinOffset(markerSize))
+
+    private fun maxCoordinate(displaySize: Int): Int = (displaySize - 1).coerceAtLeast(0)
 
     private fun clampToolbarParams(params: WindowManager.LayoutParams, controls: View) {
         val bounds = displayBounds()

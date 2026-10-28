@@ -17,11 +17,15 @@ class MacroRepository(context: Context) {
                 listOf(initial)
             }
             is ProfileReadResult.Loaded -> result.profiles
-            is ProfileReadResult.Corrupt -> {
-                backupCorruptProfiles(result.raw)
-                listOf(createDefaultProfile(RECOVERY_PROFILE_NAME))
-            }
+            is ProfileReadResult.Corrupt -> recoverCorruptProfiles(result.raw)
         }
+    }
+
+    @Synchronized
+    fun consumeRecoveryNotice(): Boolean {
+        if (!preferences.getBoolean(KEY_RECOVERY_NOTICE_PENDING, false)) return false
+        preferences.edit().putBoolean(KEY_RECOVERY_NOTICE_PENDING, false).apply()
+        return true
     }
 
     fun hasRecoveryBackup(): Boolean = preferences.contains(KEY_CORRUPT_BACKUP)
@@ -130,10 +134,18 @@ class MacroRepository(context: Context) {
         }.getOrElse { ProfileReadResult.Corrupt(raw) }
     }
 
-    private fun backupCorruptProfiles(raw: String) {
+    private fun recoverCorruptProfiles(raw: String): List<MacroProfile> {
+        val recovery = sanitizeProfile(createDefaultProfile(RECOVERY_PROFILE_NAME))
+        val editor = preferences.edit()
         if (!preferences.contains(KEY_CORRUPT_BACKUP)) {
-            preferences.edit().putString(KEY_CORRUPT_BACKUP, raw).apply()
+            editor.putString(KEY_CORRUPT_BACKUP, raw)
         }
+        editor
+            .putString(KEY_PROFILES_JSON, buildRootJson(listOf(recovery), recovery.name).toString())
+            .putString(KEY_ACTIVE_PROFILE, recovery.name)
+            .putBoolean(KEY_RECOVERY_NOTICE_PENDING, true)
+            .commit()
+        return listOf(recovery)
     }
 
     private fun parseProfile(json: JSONObject): MacroProfile? = runCatching {
@@ -165,12 +177,13 @@ class MacroRepository(context: Context) {
             }
         }.ifEmpty { listOf(defaultPoint()) }
 
+        val defaultDelayMs = json.optLong(KEY_DEFAULT_DELAY_MS, ClickPreferences.DEFAULT_DELAY_MS)
         sanitizeProfile(
             MacroProfile(
                 name = json.optString(KEY_NAME, DEFAULT_PROFILE_NAME),
                 points = points,
-                defaultDelayMs = json.optLong(KEY_DEFAULT_DELAY_MS, ClickPreferences.DEFAULT_DELAY_MS),
-                loopDelayMs = json.optLong(KEY_LOOP_DELAY_MS, ClickPreferences.DEFAULT_DELAY_MS),
+                defaultDelayMs = defaultDelayMs,
+                loopDelayMs = json.optLong(KEY_LOOP_DELAY_MS, defaultDelayMs),
                 loopLimit = json.optInt(KEY_LOOP_LIMIT, 0),
                 countdownSeconds = json.optInt(KEY_COUNTDOWN, 3),
                 keepScreenOn = json.optBoolean(KEY_KEEP_SCREEN_ON, false)
@@ -296,6 +309,7 @@ class MacroRepository(context: Context) {
         private const val KEY_PROFILES_JSON = "profiles_json"
         private const val KEY_ACTIVE_PROFILE = "active_profile"
         private const val KEY_CORRUPT_BACKUP = "profiles_json_corrupt_backup"
+        private const val KEY_RECOVERY_NOTICE_PENDING = "recovery_notice_pending"
         private const val KEY_SCHEMA_VERSION = "schemaVersion"
         private const val KEY_PROFILES = "profiles"
         private const val KEY_NAME = "name"
