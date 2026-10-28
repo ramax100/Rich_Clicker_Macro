@@ -28,11 +28,7 @@ Anda boleh membuat fork atau versi modifikasi. Pertahankan pemberitahuan hak cip
 
 ## Download
 
-Unduh APK stabil terbaru melalui halaman [GitHub Releases](https://github.com/ramax100/Rich_Clicker_Macro/releases/latest).
-
-> APK stabil saat ini adalah v0.6.3. Source v0.6.4 memuat perbaikan tambahan dan belum tersedia sebagai APK bertanda tangan sampai release berikutnya diterbitkan.
-
-Jika asset release tidak tampil, gunakan [download APK v0.6.3 langsung](https://github.com/ramax100/Rich_Clicker_Macro/raw/refs/heads/feature/rich-clicker-macro/release/Rich-Clicker-Macro-v0.6.3-release.apk).
+Unduh APK stabil terbaru melalui halaman [GitHub Releases](https://github.com/ramax100/Rich_Clicker_Macro/releases/latest). Halaman tersebut selalu menunjuk release yang sudah dibangun, ditandatangani, dan diverifikasi; versi source dapat lebih baru sebelum release berikutnya diterbitkan.
 
 > APK dipasang melalui sideload dan dapat diperiksa oleh Google Play Protect. Jangan menonaktifkan proteksi perangkat. Pastikan APK berasal dari repository ini dan cocokkan checksum pada catatan release.
 
@@ -167,6 +163,17 @@ cd Rich_Clicker_Macro
 APK release resmi ditandatangani di luar repository menggunakan update key yang dipertahankan pengelola. Build lokal tanpa key tersebut tidak dapat dipasang sebagai pembaruan atas APK resmi. Fingerprint SHA-256 sertifikat APK v0.6.3 adalah `C4:EF:BF:87:53:B3:72:C6:2B:65:D5:02:7C:1A:1A:ED:6B:3C:F9:E9:A3:6C:81:C9:01:3A:5F:A6:77:05:89:9F`.
 
 Jangan commit keystore, password signing, atau APK privat. `.gitignore` melindungi path signing dan APK root yang tercantum; periksa kembali file sensitif di lokasi lain sebelum commit.
+
+### Menerbitkan APK resmi
+
+Workflow `.github/workflows/release.yml` membangun, menandatangani, memverifikasi, dan menerbitkan APK v0.6.4 secara manual. Buat environment **release** melalui **Settings → Environments**, aktifkan required reviewer, lalu tambahkan environment secrets berikut:
+
+- `ANDROID_KEYSTORE_BASE64`: isi keystore v0.6.3 yang telah diubah menjadi Base64 satu baris.
+- `ANDROID_KEYSTORE_PASSWORD`: password keystore.
+- `ANDROID_KEY_ALIAS`: alias update key.
+- `ANDROID_KEY_PASSWORD`: password update key.
+
+Setelah workflow digabungkan ke default branch, buka **Actions → Release signed APK → Run workflow**. Workflow hanya menerima default branch, memeriksa versionCode/versionName, dan membandingkan fingerprint sertifikat dengan APK v0.6.3 sebelum membuat tag serta GitHub Release v0.6.4. Jangan kirim nilai secrets melalui issue, pull request, commit, atau chat.
 
 ## Modifikasi dan kontribusi
 

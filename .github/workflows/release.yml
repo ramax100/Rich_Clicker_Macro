@@ -1,0 +1,330 @@
+name: Release signed APK
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  RELEASE_VERSION: "0.6.4"
+  RELEASE_VERSION_CODE: "10"
+  RELEASE_TAG: "v0.6.4"
+  RELEASE_APK: "Rich-Clicker-Macro-v0.6.4-release.apk"
+
+concurrency:
+  group: release-v0.6.4
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build and verify signed APK
+    if: github.ref_name == github.event.repository.default_branch
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: release
+    permissions:
+      contents: read
+    outputs:
+      source_sha: ${{ steps.release_metadata.outputs.source_sha }}
+
+    steps:
+      - name: Check out release source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Java 17
+        uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@8da46b539cd8fe6ab27ca75128919a18d757604c # v6.4.1
+
+      - name: Install pinned Android SDK packages
+        shell: bash
+        run: |
+          set -euo pipefail
+          sdkmanager "platforms;android-35" "build-tools;35.0.0"
+
+      - name: Validate source release metadata
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -Fq "versionCode = $RELEASE_VERSION_CODE" app/build.gradle.kts
+          grep -Fq "versionName = \"$RELEASE_VERSION\"" app/build.gradle.kts
+          test ! -e "release/$RELEASE_APK"
+
+      - name: Decode update keystore
+        shell: bash
+        env:
+          KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          test -n "$KEYSTORE_BASE64"
+          test -n "$KEYSTORE_PASSWORD"
+          test -n "$KEY_ALIAS"
+          test -n "$KEY_PASSWORD"
+          printf '%s' "$KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/rich-clicker-release.jks"
+          chmod 600 "$RUNNER_TEMP/rich-clicker-release.jks"
+
+      - name: Build signed release APK
+        shell: bash
+        env:
+          ANDROID_KEYSTORE_PATH: ${{ runner.temp }}/rich-clicker-release.jks
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: ./gradlew --no-daemon clean assembleRelease
+
+      - name: Verify APK identity, alignment, and certificate
+        id: release_metadata
+        shell: bash
+        run: |
+          set -euo pipefail
+          source_apk="app/build/outputs/apk/release/app-release.apk"
+          metadata_file="app/build/outputs/apk/release/output-metadata.json"
+          test -s "$source_apk"
+          test -s "$metadata_file"
+
+          python3 - "$metadata_file" "$RELEASE_VERSION_CODE" "$RELEASE_VERSION" <<'PY'
+          import json
+          import pathlib
+          import sys
+
+          metadata = json.loads(pathlib.Path(sys.argv[1]).read_text())
+          assert metadata.get("applicationId") == "com.example.autoclicker", metadata
+          assert metadata.get("variantName") == "release", metadata
+          assert metadata.get("artifactType", {}).get("type") == "APK", metadata
+          elements = metadata.get("elements", [])
+          assert len(elements) == 1, elements
+          element = elements[0]
+          assert str(element.get("versionCode")) == sys.argv[2], element
+          assert element.get("versionName") == sys.argv[3], element
+          assert element.get("outputFile") == "app-release.apk", element
+          PY
+
+          build_tools="$ANDROID_HOME/build-tools/35.0.0"
+          aapt_path="$build_tools/aapt"
+          apksigner_path="$build_tools/apksigner"
+          zipalign_path="$build_tools/zipalign"
+          test -x "$aapt_path"
+          test -x "$apksigner_path"
+          test -x "$zipalign_path"
+
+          badging="$($aapt_path dump badging "$source_apk" | head -n 1)"
+          case "$badging" in
+            *"name='com.example.autoclicker'"*"versionCode='$RELEASE_VERSION_CODE'"*"versionName='$RELEASE_VERSION'"*) ;;
+            *) printf 'Unexpected APK identity: %s\n' "$badging" >&2; exit 1 ;;
+          esac
+
+          "$zipalign_path" -c -P 16 -v 4 "$source_apk"
+          "$apksigner_path" verify --verbose --print-certs "$source_apk"
+
+          expected_digest="c4efbf8753b372c62b65d5027c1a1aed6b3cf9e9a36c81c9013a5fa67705899f"
+          signer_output="$("$apksigner_path" verify --print-certs "$source_apk")"
+          signer_count="$(grep -c '^Signer #[0-9][0-9]* certificate SHA-256 digest: ' <<<"$signer_output")"
+          test "$signer_count" -eq 1
+          actual_digest="$(sed -n 's/^Signer #1 certificate SHA-256 digest: //p' <<<"$signer_output" | head -n 1 | tr '[:upper:]' '[:lower:]')"
+          test "$actual_digest" = "$expected_digest"
+
+          mkdir -p release-output
+          cp "$source_apk" "release-output/$RELEASE_APK"
+          (
+            cd release-output
+            sha256sum "$RELEASE_APK" > "$RELEASE_APK.sha256"
+          )
+          printf '%s\n' "$GITHUB_SHA" > release-output/source-sha.txt
+          checksum="$(cut -d' ' -f1 "release-output/$RELEASE_APK.sha256")"
+          cat > release-output/release-notes.md <<NOTES
+          ## Rich Clicker Macro $RELEASE_TAG
+
+          - Memperbaiki ketepatan gesture terhadap marker fisik.
+          - Memperkuat lifecycle macro, profil, import/export, overlay, dan Quick Settings.
+          - Memindahkan tombol berhenti ke header toolbar.
+          - Menambahkan log diagnostik lokal untuk target package, System UI, status layar, gesture, dan kegagalan overlay.
+
+          SHA-256 APK: \`$checksum\`
+
+          Log diagnostik menjelaskan observasi Rich Clicker. Force close internal aplikasi lain tetap memerlukan logcat atau bug report perangkat.
+          NOTES
+          printf 'source_sha=%s\n' "$GITHUB_SHA" >> "$GITHUB_OUTPUT"
+
+      - name: Upload verified release bundle
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: verified-release-v0.6.4
+          path: release-output/
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 0
+
+      - name: Remove decoded keystore
+        if: always()
+        shell: bash
+        run: rm -f "$RUNNER_TEMP/rich-clicker-release.jks"
+
+  publish:
+    name: Publish verified GitHub Release
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download verified release bundle
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: verified-release-v0.6.4
+          path: release-output
+
+      - name: Validate downloaded bundle
+        shell: bash
+        env:
+          EXPECTED_SOURCE_SHA: ${{ needs.build.outputs.source_sha }}
+        run: |
+          set -euo pipefail
+          test "$(cat release-output/source-sha.txt)" = "$EXPECTED_SOURCE_SHA"
+          test "$EXPECTED_SOURCE_SHA" = "$GITHUB_SHA"
+          test -s "release-output/$RELEASE_APK"
+          test -s "release-output/$RELEASE_APK.sha256"
+          test -s release-output/release-notes.md
+          (
+            cd release-output
+            sha256sum -c "$RELEASE_APK.sha256"
+          )
+
+      - name: Create or resume draft release
+        id: release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          api="repos/$GITHUB_REPOSITORY"
+
+          verify_remote_assets() {
+            local release_json="$1"
+            local apk_file="release-output/$RELEASE_APK"
+            local checksum_file="$apk_file.sha256"
+            local expected_apk_size expected_apk_digest expected_checksum_size expected_checksum_digest
+            local remote_apk_size remote_apk_digest remote_checksum_size remote_checksum_digest
+            expected_apk_size="$(stat -c '%s' "$apk_file")"
+            expected_apk_digest="sha256:$(sha256sum "$apk_file" | cut -d' ' -f1)"
+            expected_checksum_size="$(stat -c '%s' "$checksum_file")"
+            expected_checksum_digest="sha256:$(sha256sum "$checksum_file" | cut -d' ' -f1)"
+            remote_apk_size="$(jq -r --arg name "$RELEASE_APK" '.assets[]? | select(.name == $name) | .size' <<<"$release_json")"
+            remote_apk_digest="$(jq -r --arg name "$RELEASE_APK" '.assets[]? | select(.name == $name) | .digest // empty' <<<"$release_json")"
+            remote_checksum_size="$(jq -r --arg name "$RELEASE_APK.sha256" '.assets[]? | select(.name == $name) | .size' <<<"$release_json")"
+            remote_checksum_digest="$(jq -r --arg name "$RELEASE_APK.sha256" '.assets[]? | select(.name == $name) | .digest // empty' <<<"$release_json")"
+            test "$remote_apk_size" = "$expected_apk_size"
+            test "$remote_apk_digest" = "$expected_apk_digest"
+            test "$remote_checksum_size" = "$expected_checksum_size"
+            test "$remote_checksum_digest" = "$expected_checksum_digest"
+          }
+
+          tag_refs="$(gh api "$api/git/matching-refs/tags/$RELEASE_TAG")"
+          exact_tag_refs="$(jq -c --arg ref "refs/tags/$RELEASE_TAG" '[.[] | select(.ref == $ref)]' <<<"$tag_refs")"
+          tag_count="$(jq 'length' <<<"$exact_tag_refs")"
+          test "$tag_count" -le 1
+          if [ "$tag_count" -eq 1 ]; then
+            tag_type="$(jq -r '.[0].object.type' <<<"$exact_tag_refs")"
+            tag_sha="$(jq -r '.[0].object.sha' <<<"$exact_tag_refs")"
+            if [ "$tag_type" = "tag" ]; then
+              tag_sha="$(gh api "$api/git/tags/$tag_sha" --jq '.object.sha')"
+            fi
+            test "$tag_sha" = "$GITHUB_SHA"
+          fi
+
+          releases_json="$(gh api --paginate --slurp "$api/releases?per_page=100")"
+          release_json="$(jq -c --arg tag "$RELEASE_TAG" 'first(.[][] | select(.tag_name == $tag)) // empty' <<<"$releases_json")"
+          if [ -n "$release_json" ]; then
+            release_id="$(jq -r '.id' <<<"$release_json")"
+            is_draft="$(jq -r '.draft' <<<"$release_json")"
+            if [ "$is_draft" = "true" ]; then
+              draft_target="$(jq -r '.target_commitish' <<<"$release_json")"
+              test "$draft_target" = "$GITHUB_SHA"
+            else
+              test "${tag_sha:-}" = "$GITHUB_SHA"
+              verify_remote_assets "$release_json"
+              printf 'already_published=true\nrelease_id=%s\n' "$release_id" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+          else
+            release_json="$(gh api "$api/releases" -X POST \
+              -f tag_name="$RELEASE_TAG" \
+              -f target_commitish="$GITHUB_SHA" \
+              -f name="Rich Clicker Macro $RELEASE_TAG" \
+              -f body="$(cat release-output/release-notes.md)" \
+              -F draft=true \
+              -F prerelease=false)"
+            release_id="$(jq -r '.id' <<<"$release_json")"
+          fi
+
+          printf 'already_published=false\nrelease_id=%s\n' "$release_id" >> "$GITHUB_OUTPUT"
+
+      - name: Upload or replace draft assets
+        if: steps.release.outputs.already_published != 'true'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_ID: ${{ steps.release.outputs.release_id }}
+        run: |
+          set -euo pipefail
+          api="repos/$GITHUB_REPOSITORY"
+          assets_json="$(gh api --paginate --slurp "$api/releases/$RELEASE_ID/assets?per_page=100" | jq 'add')"
+          for name in "$RELEASE_APK" "$RELEASE_APK.sha256"; do
+            asset_id="$(jq -r --arg name "$name" '.[] | select(.name == $name) | .id' <<<"$assets_json")"
+            if [ -n "$asset_id" ]; then
+              gh api "$api/releases/assets/$asset_id" -X DELETE
+            fi
+          done
+
+          gh api "https://uploads.github.com/$api/releases/$RELEASE_ID/assets?name=$RELEASE_APK" \
+            -X POST -H "Content-Type: application/vnd.android.package-archive" \
+            --input "release-output/$RELEASE_APK" >/dev/null
+          gh api "https://uploads.github.com/$api/releases/$RELEASE_ID/assets?name=$RELEASE_APK.sha256" \
+            -X POST -H "Content-Type: text/plain" \
+            --input "release-output/$RELEASE_APK.sha256" >/dev/null
+
+      - name: Verify assets and publish release
+        if: steps.release.outputs.already_published != 'true'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_ID: ${{ steps.release.outputs.release_id }}
+        run: |
+          set -euo pipefail
+          api="repos/$GITHUB_REPOSITORY"
+          release_json=""
+          for attempt in 1 2 3 4 5; do
+            release_json="$(gh api "$api/releases/$RELEASE_ID")"
+            apk_digest_ready="$(jq -r --arg name "$RELEASE_APK" '.assets[]? | select(.name == $name) | .digest // empty' <<<"$release_json")"
+            checksum_digest_ready="$(jq -r --arg name "$RELEASE_APK.sha256" '.assets[]? | select(.name == $name) | .digest // empty' <<<"$release_json")"
+            if [ -n "$apk_digest_ready" ] && [ -n "$checksum_digest_ready" ]; then break; fi
+            sleep 2
+          done
+          apk_file="release-output/$RELEASE_APK"
+          checksum_file="$apk_file.sha256"
+          expected_apk_size="$(stat -c '%s' "$apk_file")"
+          expected_apk_digest="sha256:$(sha256sum "$apk_file" | cut -d' ' -f1)"
+          expected_checksum_size="$(stat -c '%s' "$checksum_file")"
+          expected_checksum_digest="sha256:$(sha256sum "$checksum_file" | cut -d' ' -f1)"
+          remote_apk_size="$(jq -r --arg name "$RELEASE_APK" '.assets[]? | select(.name == $name) | .size' <<<"$release_json")"
+          remote_apk_digest="$(jq -r --arg name "$RELEASE_APK" '.assets[]? | select(.name == $name) | .digest // empty' <<<"$release_json")"
+          remote_checksum_size="$(jq -r --arg name "$RELEASE_APK.sha256" '.assets[]? | select(.name == $name) | .size' <<<"$release_json")"
+          remote_checksum_digest="$(jq -r --arg name "$RELEASE_APK.sha256" '.assets[]? | select(.name == $name) | .digest // empty' <<<"$release_json")"
+          test "$remote_apk_size" = "$expected_apk_size"
+          test "$remote_apk_digest" = "$expected_apk_digest"
+          test "$remote_checksum_size" = "$expected_checksum_size"
+          test "$remote_checksum_digest" = "$expected_checksum_digest"
+          gh api "$api/releases/$RELEASE_ID" -X PATCH \
+            -F draft=false \
+            -f make_latest=true \
+            -f body="$(cat release-output/release-notes.md)" >/dev/null

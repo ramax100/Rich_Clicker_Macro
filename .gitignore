@@ -8,6 +8,11 @@
 .externalNativeBuild/
 .cxx/
 app/build/
-/*.apk
-signing/*.jks
-signing/KEY-PASSWORD.txt
+*.apk
+*.jks
+*.keystore
+*.p12
+*.pfx
+keystore.properties
+key.properties
+/signing/
