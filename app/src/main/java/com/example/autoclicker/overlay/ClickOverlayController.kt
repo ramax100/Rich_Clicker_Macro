@@ -43,7 +43,6 @@ class ClickOverlayController(
     private var controlsParams: WindowManager.LayoutParams? = null
     private var editorContent: LinearLayout? = null
     private var toolbarHandle: TextView? = null
-    private var emergencyStopView: View? = null
     private var delayDialog: AlertDialog? = null
     private var selectedIndex = 0
     private var currentIndex = 0
@@ -116,8 +115,6 @@ class ClickOverlayController(
             it.endView?.isMacroRunning = false
         }
         setTargetsTouchable(true)
-        setControlsTouchable(true)
-        hideEmergencyStop()
         applyKeepScreenOn(false)
         updateControls()
         service.notifyTileStateChanged()
@@ -425,6 +422,7 @@ class ClickOverlayController(
         dismissDelayDialog()
         val profile = currentProfile ?: return
         if (runState != RunState.IDLE || targets.isEmpty()) return
+        if (isToolbarCollapsed) toggleToolbar()
 
         runGeneration++
         val generation = runGeneration
@@ -439,14 +437,6 @@ class ClickOverlayController(
 
         if (!setTargetsTouchable(false)) {
             stopWithMessage("Target tidak dapat disiapkan oleh sistem")
-            return
-        }
-        if (!setControlsTouchable(false)) {
-            stopWithMessage("Toolbar tidak dapat dibuat tembus sentuhan")
-            return
-        }
-        if (!showEmergencyStop()) {
-            stopWithMessage("Tombol STOP darurat tidak dapat ditampilkan")
             return
         }
         applyKeepScreenOn(profile.keepScreenOn)
@@ -512,6 +502,10 @@ class ClickOverlayController(
         }
         if (start == null || end == null) {
             stopWithMessage("Posisi marker tidak dapat diverifikasi. Macro dihentikan.")
+            return
+        }
+        if (isCoveredByControls(start.first, start.second)) {
+            stopWithMessage("Titik tertutup menu. Pindahkan menu lalu mulai kembali.")
             return
         }
 
@@ -580,47 +574,6 @@ class ClickOverlayController(
         }
         controls.keepScreenOn = enabled
         runCatching { windowManager.updateViewLayout(controls, params) }
-    }
-
-    private fun showEmergencyStop(): Boolean {
-        if (emergencyStopView != null) return true
-        val button = Button(service).apply {
-            text = "STOP"
-            textSize = 9f
-            setTextColor(Color.WHITE)
-            setTypeface(typeface, Typeface.BOLD)
-            setPadding(dp(6f), 0, dp(6f), 0)
-            background = GradientDrawable().apply {
-                setColor(Color.rgb(220, 38, 38))
-                cornerRadius = dp(24f).toFloat()
-                setStroke(dp(2f), Color.WHITE)
-            }
-            contentDescription = "Hentikan macro sekarang"
-            setOnClickListener { stopClicking() }
-        }
-        val params = WindowManager.LayoutParams(
-            dp(48f),
-            dp(36f),
-            WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
-            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
-            PixelFormat.TRANSLUCENT
-        ).apply {
-            gravity = Gravity.TOP or Gravity.RIGHT
-            x = dp(12f)
-            y = dp(72f)
-        }
-        return if (runCatching { windowManager.addView(button, params) }.isSuccess) {
-            emergencyStopView = button
-            true
-        } else {
-            false
-        }
-    }
-
-    private fun hideEmergencyStop() {
-        emergencyStopView?.let { view ->
-            if (removeViewSafely(view)) emergencyStopView = null
-        }
     }
 
     private fun showDelayInputDialog() {
@@ -829,13 +782,6 @@ class ClickOverlayController(
         return allUpdated
     }
 
-    private fun setControlsTouchable(touchable: Boolean): Boolean {
-        val controls = controlsView ?: return true
-        val params = controlsParams ?: return false
-        params.flags = touchFlags(params.flags, touchable)
-        return runCatching { windowManager.updateViewLayout(controls, params) }.isSuccess
-    }
-
     private fun touchFlags(flags: Int, touchable: Boolean): Int = if (touchable) {
         flags and WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE.inv()
     } else {
@@ -925,7 +871,7 @@ class ClickOverlayController(
                     true
                 }
                 MotionEvent.ACTION_UP -> {
-                    if (!moved) toggleToolbar()
+                    if (!moved && (runState == RunState.IDLE || isToolbarCollapsed)) toggleToolbar()
                     clampToolbarToDisplay()
                     true
                 }
@@ -1180,6 +1126,19 @@ class ClickOverlayController(
         normalized <= 0f -> minimum
         normalized >= 1f -> maximum
         else -> observed.coerceIn(minimum, maximum)
+    }
+
+    private fun isCoveredByControls(x: Float, y: Float): Boolean {
+        val controls = controlsView ?: return false
+        if (!controls.isAttachedToWindow || controls.visibility != View.VISIBLE ||
+            controls.width <= 0 || controls.height <= 0
+        ) {
+            return false
+        }
+        val location = IntArray(2)
+        controls.getLocationOnScreen(location)
+        return x >= location[0] && x < location[0] + controls.width &&
+            y >= location[1] && y < location[1] + controls.height
     }
 
     private fun clampToolbarParams(params: WindowManager.LayoutParams, controls: View) {

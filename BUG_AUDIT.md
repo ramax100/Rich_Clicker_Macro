@@ -4,7 +4,7 @@
 
 - Data profil JSON korup dicadangkan sebelum profil Recovery digunakan.
 - Migrasi interval lama kini juga mengisi jeda antar-loop.
-- Long press/swipe dibagi menjadi segmen maksimal 500 ms; STOP membatalkan kelanjutan segmen.
+- Long press/swipe dibagi menjadi segmen maksimal 500 ms; tombol `■` membatalkan kelanjutan segmen.
 - Dialog delay/durasi/repeat ditutup sebelum macro dimulai, termasuk dari Quick Settings Tile.
 - State toolbar collapse dan hide marker direset saat editor ditutup.
 - Pusat tap/swipe dapat mencapai edge layar; marker boleh setengah berada di luar layar.

@@ -229,7 +229,7 @@ class MainActivity : Activity() {
     }
 
     private fun createUsageCard() = TextView(this).apply {
-        text = "Panduan singkat\n• + / −: tambah atau hapus titik.\n• ↑ / ↓: ubah urutan.\n• Ketuk label delay: atur jeda.\n• Ketuk jenis aksi: Tap → Tahan → Geser.\n• Ketuk durasi atau ×N: input langsung.\n• Marker E adalah tujuan swipe.\n• ▶ mulai, ■ atau STOP menghentikan."
+        text = "Panduan singkat\n• + / −: tambah atau hapus titik.\n• ↑ / ↓: ubah urutan.\n• Ketuk label delay: atur jeda.\n• Ketuk jenis aksi: Tap → Tahan → Geser.\n• Ketuk durasi atau ×N: input langsung.\n• Marker E adalah tujuan swipe.\n• ▶ mulai, ■ di menu menghentikan."
         textSize = 14f
         setTextColor(Color.rgb(51, 65, 85))
         setLineSpacing(0f, 1.18f)

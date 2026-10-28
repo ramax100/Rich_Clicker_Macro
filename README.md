@@ -69,7 +69,7 @@ Jika asset release tidak tampil, gunakan [download APK v0.6.3 langsung](https://
 - Toolbar dapat dipindahkan, diciutkan, dan dibuka kembali.
 - Toolbar responsif untuk perangkat dengan layar sempit.
 - Posisi disimpan sebagai koordinat relatif agar menyesuaikan rotasi layar.
-- Tombol STOP darurat berukuran ringkas.
+- Tombol berhenti `■` tersedia di dalam toolbar.
 
 ### Profil dan data
 
@@ -83,7 +83,7 @@ Jika asset release tidak tampil, gunakan [download APK v0.6.3 langsung](https://
 
 ### Kontrol dan stabilitas
 
-- Tombol mulai, berhenti, dan STOP darurat.
+- Tombol mulai dan berhenti tersedia di toolbar.
 - Quick Settings Tile untuk mulai/berhenti macro yang sudah dimuat.
 - Keep Screen On opsional selama macro berjalan.
 - Callback gesture mencegah urutan bertumpuk.
@@ -110,7 +110,7 @@ Untuk memperbarui aplikasi, instal APK versi baru di atas versi lama. Package na
 6. Tambahkan dan geser marker ke posisi yang diinginkan.
 7. Pilih jenis aksi, durasi, jumlah pengulangan, dan delay setiap titik.
 8. Tekan `▶` untuk menjalankan macro.
-9. Gunakan `■`, tombol merah **STOP**, atau Quick Settings Tile untuk berhenti.
+9. Gunakan `■` di dalam toolbar atau Quick Settings Tile untuk berhenti.
 
 ## Kontrol overlay
 
