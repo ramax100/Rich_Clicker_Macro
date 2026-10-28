@@ -116,6 +116,7 @@ class ClickOverlayController(
             it.endView?.isMacroRunning = false
         }
         setTargetsTouchable(true)
+        setControlsTouchable(true)
         hideEmergencyStop()
         applyKeepScreenOn(false)
         updateControls()
@@ -440,6 +441,10 @@ class ClickOverlayController(
             stopWithMessage("Target tidak dapat disiapkan oleh sistem")
             return
         }
+        if (!setControlsTouchable(false)) {
+            stopWithMessage("Toolbar tidak dapat dibuat tembus sentuhan")
+            return
+        }
         if (!showEmergencyStop()) {
             stopWithMessage("Tombol STOP darurat tidak dapat ditampilkan")
             return
@@ -488,19 +493,34 @@ class ClickOverlayController(
         point.endView?.isActivePoint = true
         updateControls()
         val bounds = displayBounds()
-        val maxX = maxCoordinate(bounds.width()).toFloat()
-        val maxY = maxCoordinate(bounds.height()).toFloat()
-        val x = point.normalizedX.coerceIn(0f, 1f) * maxX
-        val y = point.normalizedY.coerceIn(0f, 1f) * maxY
-        val endX = point.endNormalizedX.coerceIn(0f, 1f) * maxX
-        val endY = point.endNormalizedY.coerceIn(0f, 1f) * maxY
+        val start = markerGestureCenter(
+            view = point.view,
+            normalizedX = point.normalizedX,
+            normalizedY = point.normalizedY,
+            bounds = bounds
+        )
+        val end = if (point.actionType == PointActionType.SWIPE) {
+            val endView = point.endView
+            if (endView == null) null else markerGestureCenter(
+                view = endView,
+                normalizedX = point.endNormalizedX,
+                normalizedY = point.endNormalizedY,
+                bounds = bounds
+            )
+        } else {
+            start
+        }
+        if (start == null || end == null) {
+            stopWithMessage("Posisi marker tidak dapat diverifikasi. Macro dihentikan.")
+            return
+        }
 
         val accepted = service.performAction(
             actionType = point.actionType,
-            startX = x,
-            startY = y,
-            endX = endX,
-            endY = endY,
+            startX = start.first,
+            startY = start.second,
+            endX = end.first,
+            endY = end.second,
             durationMs = point.actionDurationMs,
             onCompleted = {
                 if (runState != RunState.RUNNING || generation != runGeneration) return@performAction
@@ -809,6 +829,13 @@ class ClickOverlayController(
         return allUpdated
     }
 
+    private fun setControlsTouchable(touchable: Boolean): Boolean {
+        val controls = controlsView ?: return true
+        val params = controlsParams ?: return false
+        params.flags = touchFlags(params.flags, touchable)
+        return runCatching { windowManager.updateViewLayout(controls, params) }.isSuccess
+    }
+
     private fun touchFlags(flags: Int, touchable: Boolean): Int = if (touchable) {
         flags and WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE.inv()
     } else {
@@ -1048,7 +1075,9 @@ class ClickOverlayController(
             size,
             size,
             WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
-            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
+                WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
             PixelFormat.TRANSLUCENT
         ).apply {
             gravity = Gravity.TOP or Gravity.LEFT
@@ -1116,6 +1145,43 @@ class ClickOverlayController(
 
     private fun maxCoordinate(displaySize: Int): Int = (displaySize - 1).coerceAtLeast(0)
 
+    private fun markerGestureCenter(
+        view: View,
+        normalizedX: Float,
+        normalizedY: Float,
+        bounds: Rect
+    ): Pair<Float, Float>? {
+        if (!view.isAttachedToWindow || view.width <= 0 || view.height <= 0) return null
+        val location = IntArray(2)
+        view.getLocationOnScreen(location)
+        val observedX = location[0] + view.width / 2f
+        val observedY = location[1] + view.height / 2f
+        val minX = bounds.left.toFloat()
+        val minY = bounds.top.toFloat()
+        val maxX = (bounds.right - 1).coerceAtLeast(bounds.left).toFloat()
+        val maxY = (bounds.bottom - 1).coerceAtLeast(bounds.top).toFloat()
+        if (observedX !in (minX - POSITION_TOLERANCE_PX)..(maxX + POSITION_TOLERANCE_PX) ||
+            observedY !in (minY - POSITION_TOLERANCE_PX)..(maxY + POSITION_TOLERANCE_PX)
+        ) {
+            return null
+        }
+        return Pair(
+            resolveGestureCoordinate(normalizedX, observedX, minX, maxX),
+            resolveGestureCoordinate(normalizedY, observedY, minY, maxY)
+        )
+    }
+
+    private fun resolveGestureCoordinate(
+        normalized: Float,
+        observed: Float,
+        minimum: Float,
+        maximum: Float
+    ): Float = when {
+        normalized <= 0f -> minimum
+        normalized >= 1f -> maximum
+        else -> observed.coerceIn(minimum, maximum)
+    }
+
     private fun clampToolbarParams(params: WindowManager.LayoutParams, controls: View) {
         val bounds = displayBounds()
         val width = controls.width.takeIf { it > 0 } ?: params.width.takeIf { it > 0 } ?: dp(260f)
@@ -1133,8 +1199,7 @@ class ClickOverlayController(
 
     private fun displayBounds(): Rect {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            val current = windowManager.currentWindowMetrics.bounds
-            return Rect(0, 0, current.width(), current.height())
+            return Rect(windowManager.currentWindowMetrics.bounds)
         }
         val metrics = DisplayMetrics()
         @Suppress("DEPRECATION")
@@ -1261,6 +1326,7 @@ class ClickOverlayController(
         private const val TARGET_TOUCH_SIZE_DP = 44f
         private const val OVERLAY_FLAG_SETTLE_MS = 50L
         private const val REPEAT_GAP_MS = 100L
+        private const val POSITION_TOLERANCE_PX = 1f
     }
 }
 
