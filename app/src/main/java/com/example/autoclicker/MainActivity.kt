@@ -28,6 +28,8 @@ import com.example.autoclicker.data.MacroProfile
 import com.example.autoclicker.data.MacroRepository
 import java.io.ByteArrayOutputStream
 import java.io.InputStream
+import java.nio.ByteBuffer
+import java.nio.charset.CodingErrorAction
 
 class MainActivity : Activity() {
     private lateinit var repository: MacroRepository
@@ -130,7 +132,18 @@ class MainActivity : Activity() {
 
         return ScrollView(this).apply {
             isFillViewport = true
+            clipToPadding = false
+            setOnApplyWindowInsetsListener { view, insets ->
+                view.setPadding(
+                    insets.systemWindowInsetLeft,
+                    insets.systemWindowInsetTop,
+                    insets.systemWindowInsetRight,
+                    insets.systemWindowInsetBottom
+                )
+                insets
+            }
             addView(content)
+            requestApplyInsets()
         }
     }
 
@@ -161,10 +174,16 @@ class MainActivity : Activity() {
                 override fun onItemSelected(parent: AdapterView<*>?, view: View?, position: Int, id: Long) {
                     if (isRefreshingProfiles || position !in 0 until profileAdapter.count) return
                     val newName = profileAdapter.getItem(position) ?: return
+                    if (newName == selectedProfileName) return
                     val previousName = selectedProfileName
                     if (previousName != null && previousName != newName) {
-                        if (saveProfileSettings(showConfirmation = false, refreshUi = false) == null) {
-                            refreshProfiles(previousName)
+                        val saved = saveProfileSettings(showConfirmation = false, refreshUi = false)
+                        if (saved == null) {
+                            restoreProfileSpinner(previousName)
+                            return
+                        }
+                        if (saved.name != previousName) {
+                            refreshProfiles(newName)
                             return
                         }
                     }
@@ -229,7 +248,7 @@ class MainActivity : Activity() {
     }
 
     private fun createUsageCard() = TextView(this).apply {
-        text = "Panduan singkat\n• + / −: tambah atau hapus titik.\n• ↑ / ↓: ubah urutan.\n• Ketuk label delay: atur jeda.\n• Ketuk jenis aksi: Tap → Tahan → Geser.\n• Ketuk durasi atau ×N: input langsung.\n• Marker E adalah tujuan swipe.\n• ▶ mulai, ■ di menu menghentikan."
+        text = "Panduan singkat\n• + / −: tambah atau hapus titik.\n• ↑ / ↓: ubah urutan.\n• Ketuk label delay: atur jeda.\n• Ketuk jenis aksi: Tap → Tahan → Geser.\n• Ketuk durasi atau ×N: input langsung.\n• Marker E adalah tujuan swipe.\n• ▶ mulai, ■ pada header menghentikan."
         textSize = 14f
         setTextColor(Color.rgb(51, 65, 85))
         setLineSpacing(0f, 1.18f)
@@ -251,6 +270,15 @@ class MainActivity : Activity() {
         repository.setActiveProfile(profiles[index].name)
         isRefreshingProfiles = false
         loadProfileFields()
+    }
+
+    private fun restoreProfileSpinner(profileName: String) {
+        val index = (0 until profileAdapter.count)
+            .firstOrNull { profileAdapter.getItem(it) == profileName }
+            ?: return
+        isRefreshingProfiles = true
+        profileSpinner.setSelection(index, false)
+        isRefreshingProfiles = false
     }
 
     private fun loadProfileFields() {
@@ -348,8 +376,14 @@ class MainActivity : Activity() {
             Toast.makeText(this, "Layanan sedang disiapkan. Coba lagi sesaat.", Toast.LENGTH_SHORT).show()
             return
         }
-        service.showProfile(profile)
-        Toast.makeText(this, "Editor aktif di atas aplikasi lain", Toast.LENGTH_LONG).show()
+        service.showProfile(profile) { shown ->
+            val message = if (shown) {
+                "Editor aktif di atas aplikasi lain"
+            } else {
+                "Editor gagal ditampilkan. Coba tutup overlay lama dan ulangi."
+            }
+            Toast.makeText(applicationContext, message, Toast.LENGTH_LONG).show()
+        }
     }
 
     private fun openExportPicker() {
@@ -370,7 +404,11 @@ class MainActivity : Activity() {
     private fun exportProfiles(data: Intent) {
         val uri = data.data ?: return
         runCatching {
-            contentResolver.openOutputStream(uri, "wt")?.bufferedWriter()?.use { it.write(repository.exportJson()) }
+            val json = repository.exportJson()
+            require(json.toByteArray(Charsets.UTF_8).size <= MAX_PROFILE_FILE_BYTES) {
+                "Data profil terlalu besar; maksimum file 2 MB"
+            }
+            contentResolver.openOutputStream(uri, "wt")?.bufferedWriter(Charsets.UTF_8)?.use { it.write(json) }
                 ?: error("Dokumen tidak dapat dibuka")
         }.onSuccess { Toast.makeText(this, "Semua profil berhasil diekspor", Toast.LENGTH_LONG).show() }
             .onFailure { Toast.makeText(this, "Export gagal: ${it.message}", Toast.LENGTH_LONG).show() }
@@ -396,12 +434,18 @@ class MainActivity : Activity() {
             val count = input.read(buffer)
             if (count < 0) break
             totalBytes += count
-            if (totalBytes > MAX_IMPORT_BYTES) {
+            if (totalBytes > MAX_PROFILE_FILE_BYTES) {
                 error("File profil terlalu besar; maksimum 2 MB")
             }
             result.write(buffer, 0, count)
         }
-        return result.toString(Charsets.UTF_8.name())
+        return runCatching {
+            Charsets.UTF_8.newDecoder()
+                .onMalformedInput(CodingErrorAction.REPORT)
+                .onUnmappableCharacter(CodingErrorAction.REPORT)
+                .decode(ByteBuffer.wrap(result.toByteArray()))
+                .toString()
+        }.getOrElse { error("File profil bukan UTF-8 yang valid") }
     }
 
     private fun refreshServiceStatus() {
@@ -472,7 +516,7 @@ class MainActivity : Activity() {
     companion object {
         private const val REQUEST_EXPORT = 1001
         private const val REQUEST_IMPORT = 1002
-        private const val MAX_IMPORT_BYTES = 2_000_000
+        private const val MAX_PROFILE_FILE_BYTES = 2_000_000
         private const val STATE_PROFILE_NAME = "draft_profile_name"
         private const val STATE_DEFAULT_DELAY = "draft_default_delay"
         private const val STATE_LOOP_DELAY = "draft_loop_delay"

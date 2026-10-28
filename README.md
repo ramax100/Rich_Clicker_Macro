@@ -3,7 +3,7 @@
   <h1>Rich Clicker Macro</h1>
   <p>Auto clicker dan editor macro multi-aksi untuk Android.</p>
 
-  [![Version](https://img.shields.io/badge/version-0.6.3-4f46e5)](https://github.com/ramax100/Rich_Clicker_Macro/releases/latest)
+  [![Source version](https://img.shields.io/badge/source-0.6.4-4f46e5)](./app/build.gradle.kts)
   [![Android](https://img.shields.io/badge/Android-8.0%2B-3DDC84?logo=android)](#persyaratan)
   [![License](https://img.shields.io/badge/license-MIT-blue)](./LICENSE)
   [![Free](https://img.shields.io/badge/price-100%25%20gratis-brightgreen)](#gratis-dan-bebas-dimodifikasi)
@@ -13,7 +13,7 @@
 
 **Rich Clicker Macro** adalah aplikasi Android untuk membuat rangkaian tap, long press, dan swipe yang berjalan berurutan di atas aplikasi lain. Setiap macro dapat disimpan sebagai profil, diulang, diberi countdown, serta dikontrol dari overlay atau Quick Settings.
 
-Aplikasi bekerja melalui Android Accessibility Service. Layanan hanya menjalankan gesture setelah pengguna mengaktifkannya secara manual dan menekan tombol mulai. Aplikasi tidak membaca isi layar (`canRetrieveWindowContent=false`) dan tidak berjalan otomatis saat perangkat dinyalakan.
+Aplikasi bekerja melalui Android Accessibility Service. Layanan hanya menjalankan gesture setelah pengguna mengaktifkannya secara manual dan menekan tombol mulai. Aplikasi tidak membaca isi layar (`canRetrieveWindowContent=false`), tidak berjalan otomatis saat perangkat dinyalakan, dan tidak memasukkan profil macro ke Android Auto Backup.
 
 ## Gratis dan bebas dimodifikasi
 
@@ -28,7 +28,9 @@ Anda boleh membuat fork atau versi modifikasi. Pertahankan pemberitahuan hak cip
 
 ## Download
 
-Unduh APK terbaru melalui halaman [GitHub Releases](https://github.com/ramax100/Rich_Clicker_Macro/releases/latest).
+Unduh APK stabil terbaru melalui halaman [GitHub Releases](https://github.com/ramax100/Rich_Clicker_Macro/releases/latest).
+
+> APK stabil saat ini adalah v0.6.3. Source v0.6.4 memuat perbaikan tambahan dan belum tersedia sebagai APK bertanda tangan sampai release berikutnya diterbitkan.
 
 Jika asset release tidak tampil, gunakan [download APK v0.6.3 langsung](https://github.com/ramax100/Rich_Clicker_Macro/raw/refs/heads/feature/rich-clicker-macro/release/Rich-Clicker-Macro-v0.6.3-release.apk).
 
@@ -48,7 +50,7 @@ Jika asset release tidak tampil, gunakan [download APK v0.6.3 langsung](https://
 - Urutan titik dapat diubah dengan tombol naik/turun.
 - Setelah titik terakhir, macro dapat kembali ke titik pertama.
 - Batas jumlah loop dapat diatur; nilai `0` berarti tanpa batas.
-- Jeda setiap titik dan jeda antar-loop dapat diatur terpisah.
+- Jeda setiap titik dijalankan setelah aksi; setelah titik terakhir, jeda antar-loop ditambahkan sebelum kembali ke titik pertama.
 - Countdown 0–10 detik sebelum macro dimulai.
 - Jumlah pengulangan setiap titik: 1–1.000 kali.
 
@@ -69,7 +71,7 @@ Jika asset release tidak tampil, gunakan [download APK v0.6.3 langsung](https://
 - Toolbar dapat dipindahkan, diciutkan, dan dibuka kembali.
 - Toolbar responsif untuk perangkat dengan layar sempit.
 - Posisi disimpan sebagai koordinat relatif agar menyesuaikan rotasi layar.
-- Tombol berhenti `■` tersedia di dalam toolbar.
+- Tombol berhenti `■` selalu tersedia pada header toolbar, termasuk saat menu diciutkan.
 
 ### Profil dan data
 
@@ -78,7 +80,7 @@ Jika asset release tidak tampil, gunakan [download APK v0.6.3 langsung](https://
 - Import/export semua profil menggunakan JSON schema v2.
 - Profil schema v1 tetap kompatibel.
 - Nama hasil import yang sama diberi suffix agar profil lama tidak tertimpa.
-- File import dibatasi 2 MB untuk menjaga stabilitas.
+- File import dan export dibatasi 2 MB agar hasil export yang berhasil selalu dapat diimpor kembali.
 - Data profil rusak dicadangkan sebelum profil Recovery digunakan.
 
 ### Kontrol dan stabilitas
@@ -87,6 +89,7 @@ Jika asset release tidak tampil, gunakan [download APK v0.6.3 langsung](https://
 - Quick Settings Tile untuk mulai/berhenti macro yang sudah dimuat.
 - Keep Screen On opsional selama macro berjalan.
 - Callback gesture mencegah urutan bertumpuk.
+- Macro berhenti jika aplikasi target berubah, layar terkunci, atau System UI dibuka. Quick Settings mengenali penghentian ini agar ketukan STOP tidak memulai ulang macro.
 - Draft pengaturan tetap tersedia saat layar berotasi.
 - Mendukung Android 8–15, foldable/windowed mode, dan berbagai ukuran layar melalui WindowMetrics/real display metrics.
 
@@ -117,7 +120,7 @@ Untuk memperbarui aplikasi, instal APK versi baru di atas versi lama. Package na
 | Kontrol | Fungsi |
 |---|---|
 | `▶` | Memulai countdown dan macro |
-| `■` | Menghentikan macro |
+| `■` | Menghentikan macro; selalu terlihat pada header toolbar |
 | `+` | Menambah titik |
 | `−` | Menghapus titik terpilih |
 | `↑` / `↓` | Mengubah urutan titik |
@@ -135,7 +138,9 @@ Untuk memperbarui aplikasi, instal APK versi baru di atas versi lama. Package na
 2. Pilih menu edit tile.
 3. Tambahkan tile **Rich Clicker**.
 4. Muat profil melalui aplikasi terlebih dahulu.
-5. Ketuk tile untuk mulai atau berhenti. Jika belum ada profil dimuat, tile membuka aplikasi.
+5. Ketuk tile untuk meminta mulai. Macro dimulai setelah panel ditutup dan aplikasi target aktif kembali.
+6. Jika macro sedang berjalan, membuka panel Quick Settings menghentikannya lebih dulu. Tile menampilkan “Sudah dihentikan”; ketuk untuk mengonfirmasi tanpa memulai ulang.
+7. Saat status “Menunggu aplikasi”, ketuk lagi untuk membatalkan permintaan mulai.
 
 ## Build dari source
 
@@ -148,11 +153,12 @@ Persyaratan pengembangan:
 ```bash
 git clone https://github.com/ramax100/Rich_Clicker_Macro.git
 cd Rich_Clicker_Macro
-git checkout feature/rich-clicker-macro
 ./gradlew assembleDebug
 ```
 
-Jangan commit keystore, password signing, atau APK privat. Pola tersebut sudah dicantumkan dalam `.gitignore`.
+APK release resmi ditandatangani di luar repository menggunakan update key yang dipertahankan pengelola. Build lokal tanpa key tersebut tidak dapat dipasang sebagai pembaruan atas APK resmi. Fingerprint SHA-256 sertifikat APK v0.6.3 adalah `C4:EF:BF:87:53:B3:72:C6:2B:65:D5:02:7C:1A:1A:ED:6B:3C:F9:E9:A3:6C:81:C9:01:3A:5F:A6:77:05:89:9F`.
+
+Jangan commit keystore, password signing, atau APK privat. `.gitignore` melindungi path signing dan APK root yang tercantum; periksa kembali file sensitif di lokasi lain sebelum commit.
 
 ## Modifikasi dan kontribusi
 

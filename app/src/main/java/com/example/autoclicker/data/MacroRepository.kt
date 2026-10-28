@@ -23,7 +23,7 @@ class MacroRepository(context: Context) {
 
     @Synchronized
     fun consumeRecoveryNotice(): Boolean {
-        if (!preferences.getBoolean(KEY_RECOVERY_NOTICE_PENDING, false)) return false
+        if (preferences.all[KEY_RECOVERY_NOTICE_PENDING] as? Boolean != true) return false
         preferences.edit().putBoolean(KEY_RECOVERY_NOTICE_PENDING, false).apply()
         return true
     }
@@ -33,7 +33,7 @@ class MacroRepository(context: Context) {
     @Synchronized
     fun getActiveProfile(): MacroProfile {
         val profiles = getProfiles()
-        val activeName = preferences.getString(KEY_ACTIVE_PROFILE, null)
+        val activeName = storedActiveProfileName()
         return profiles.firstOrNull { it.name == activeName } ?: profiles.first()
     }
 
@@ -76,7 +76,9 @@ class MacroRepository(context: Context) {
         val profiles = getProfiles().toMutableList()
         val index = profiles.indexOfFirst { it.name == name }
         if (index < 0) return null
-        val activeName = preferences.getString(KEY_ACTIVE_PROFILE, profiles.first().name) ?: profiles.first().name
+        val activeName = storedActiveProfileName()
+            ?.takeIf { active -> profiles.any { it.name == active } }
+            ?: profiles.first().name
         val merged = sanitizeProfile(profiles[index].copy(points = points))
         profiles[index] = merged
         writeProfiles(profiles, activeName)
@@ -85,15 +87,16 @@ class MacroRepository(context: Context) {
 
     @Synchronized
     fun deleteProfile(name: String): MacroProfile {
+        val previousActiveName = storedActiveProfileName()
         val profiles = getProfiles().filterNot { it.name == name }.toMutableList()
         if (profiles.isEmpty()) profiles.add(createDefaultProfile(DEFAULT_PROFILE_NAME))
-        val active = profiles.first()
+        val active = profiles.firstOrNull { it.name == previousActiveName } ?: profiles.first()
         writeProfiles(profiles, active.name)
         return active
     }
 
     @Synchronized
-    fun exportJson(): String = buildRootJson(getProfiles(), getActiveProfile().name).toString(2)
+    fun exportJson(): String = buildRootJson(getProfiles(), getActiveProfile().name).toString()
 
     @Synchronized
     fun importJson(json: String): Int {
@@ -101,6 +104,8 @@ class MacroRepository(context: Context) {
         val schema = root.optInt(KEY_SCHEMA_VERSION, 1)
         require(schema in 1..SCHEMA_VERSION) { "Versi format profil tidak didukung" }
         val exportedActiveName = root.optString(KEY_ACTIVE_PROFILE, "")
+            .takeIf { it.isNotBlank() }
+            ?.let(::cleanName)
         val importedArray = root.getJSONArray(KEY_PROFILES)
         val existing = getProfiles().toMutableList()
         val names = existing.map { it.name }.toMutableSet()
@@ -115,12 +120,17 @@ class MacroRepository(context: Context) {
             importedCount++
         }
         require(importedCount > 0) { "Tidak ada profil valid di dalam file" }
-        writeProfiles(existing, importedNameMap[exportedActiveName] ?: existing.last().name)
+        val importedActiveName = exportedActiveName?.let(importedNameMap::get) ?: existing.last().name
+        writeProfiles(existing, importedActiveName)
         return importedCount
     }
 
     private fun readProfiles(): ProfileReadResult {
-        val raw = preferences.getString(KEY_PROFILES_JSON, null) ?: return ProfileReadResult.Missing
+        val stored = preferences.all[KEY_PROFILES_JSON] ?: return ProfileReadResult.Missing
+        if (stored !is String) {
+            return ProfileReadResult.Corrupt("${stored::class.java.name}: $stored")
+        }
+        val raw = stored
         return runCatching {
             val root = JSONObject(raw)
             val schema = root.optInt(KEY_SCHEMA_VERSION, 1)
@@ -130,6 +140,7 @@ class MacroRepository(context: Context) {
                 for (index in 0 until array.length()) parseProfile(array.getJSONObject(index))?.let(::add)
             }
             require(profiles.isNotEmpty() && profiles.size == array.length())
+            require(profiles.map { it.name }.distinct().size == profiles.size)
             ProfileReadResult.Loaded(profiles)
         }.getOrElse { ProfileReadResult.Corrupt(raw) }
     }
@@ -137,10 +148,11 @@ class MacroRepository(context: Context) {
     private fun recoverCorruptProfiles(raw: String): List<MacroProfile> {
         val recovery = sanitizeProfile(createDefaultProfile(RECOVERY_PROFILE_NAME))
         val editor = preferences.edit()
-        if (!preferences.contains(KEY_CORRUPT_BACKUP)) {
+        if (preferences.all[KEY_CORRUPT_BACKUP] !is String) {
             editor.putString(KEY_CORRUPT_BACKUP, raw)
         }
         editor
+            .putString(KEY_LATEST_CORRUPT_BACKUP, raw)
             .putString(KEY_PROFILES_JSON, buildRootJson(listOf(recovery), recovery.name).toString())
             .putString(KEY_ACTIVE_PROFILE, recovery.name)
             .putBoolean(KEY_RECOVERY_NOTICE_PENDING, true)
@@ -223,9 +235,12 @@ class MacroRepository(context: Context) {
 
     private fun writeProfiles(profiles: List<MacroProfile>, activeName: String) {
         val sanitized = profiles.map(::sanitizeProfile)
+        require(sanitized.isNotEmpty())
+        val sanitizedActiveName = sanitized.firstOrNull { it.name == activeName }?.name
+            ?: sanitized.first().name
         preferences.edit()
-            .putString(KEY_PROFILES_JSON, buildRootJson(sanitized, activeName).toString())
-            .putString(KEY_ACTIVE_PROFILE, activeName)
+            .putString(KEY_PROFILES_JSON, buildRootJson(sanitized, sanitizedActiveName).toString())
+            .putString(KEY_ACTIVE_PROFILE, sanitizedActiveName)
             .apply()
     }
 
@@ -283,8 +298,18 @@ class MacroRepository(context: Context) {
     private fun normalized(value: Double, fallback: Float): Float =
         if (value.isFinite()) value.toFloat().coerceIn(0f, 1f) else fallback
 
-    private fun cleanName(value: String): String =
-        value.trim().ifEmpty { DEFAULT_PROFILE_NAME }.take(MacroProfile.MAX_NAME_LENGTH)
+    private fun storedActiveProfileName(): String? = preferences.all[KEY_ACTIVE_PROFILE] as? String
+
+    private fun cleanName(value: String): String {
+        val cleaned = value.trim().ifEmpty { DEFAULT_PROFILE_NAME }
+        return truncateCodePoints(cleaned, MacroProfile.MAX_NAME_LENGTH)
+    }
+
+    private fun truncateCodePoints(value: String, maximumCodePoints: Int): String {
+        val count = value.codePointCount(0, value.length)
+        if (count <= maximumCodePoints) return value
+        return value.substring(0, value.offsetByCodePoints(0, maximumCodePoints))
+    }
 
     private fun uniqueName(baseValue: String, existing: Set<String>): String {
         val base = cleanName(baseValue)
@@ -292,7 +317,10 @@ class MacroRepository(context: Context) {
         var suffix = 2
         while (true) {
             val suffixText = " ($suffix)"
-            val candidate = base.take(MacroProfile.MAX_NAME_LENGTH - suffixText.length) + suffixText
+            val candidate = truncateCodePoints(
+                base,
+                MacroProfile.MAX_NAME_LENGTH - suffixText.codePointCount(0, suffixText.length)
+            ) + suffixText
             if (candidate !in existing) return candidate
             suffix++
         }
@@ -309,6 +337,7 @@ class MacroRepository(context: Context) {
         private const val KEY_PROFILES_JSON = "profiles_json"
         private const val KEY_ACTIVE_PROFILE = "active_profile"
         private const val KEY_CORRUPT_BACKUP = "profiles_json_corrupt_backup"
+        private const val KEY_LATEST_CORRUPT_BACKUP = "profiles_json_corrupt_backup_latest"
         private const val KEY_RECOVERY_NOTICE_PENDING = "recovery_notice_pending"
         private const val KEY_SCHEMA_VERSION = "schemaVersion"
         private const val KEY_PROFILES = "profiles"

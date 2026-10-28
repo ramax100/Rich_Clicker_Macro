@@ -18,6 +18,12 @@ class MacroTileService : TileService() {
 
     override fun onClick() {
         super.onClick()
+        val accessibilityService = AutoClickAccessibilityService.instance
+        if (accessibilityService?.isMacroActive() == true) {
+            accessibilityService.toggleFromTile()
+            updateTileState()
+            return
+        }
         if (isLocked) {
             unlockAndRun { handleTileClick() }
             return
@@ -38,17 +44,23 @@ class MacroTileService : TileService() {
     private fun updateTileState() {
         val tile = qsTile ?: return
         val accessibilityService = AutoClickAccessibilityService.instance
+        val pending = accessibilityService?.isMacroStartPending() == true
+        val stoppedForSystemUi = accessibilityService?.wasStoppedForSystemUi() == true
         val active = accessibilityService?.isMacroActive() == true
         val loaded = accessibilityService?.hasLoadedProfile() == true
         tile.state = if (active) Tile.STATE_ACTIVE else Tile.STATE_INACTIVE
         tile.label = "Rich Clicker"
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             tile.subtitle = when {
+                pending -> "Menunggu aplikasi"
+                stoppedForSystemUi -> "Sudah dihentikan"
                 active -> "Berjalan"
                 loaded -> "Siap"
                 else -> "Buka aplikasi"
             }
             tile.contentDescription = when {
+                pending -> "Batalkan mulai macro Rich Clicker Macro"
+                stoppedForSystemUi -> "Macro Rich Clicker Macro sudah dihentikan"
                 active -> "Hentikan macro Rich Clicker Macro"
                 loaded -> "Mulai macro Rich Clicker Macro"
                 else -> "Buka aplikasi Rich Clicker Macro"

@@ -3,14 +3,22 @@ package com.example.autoclicker.accessibility
 import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.AccessibilityService.GestureResultCallback
 import android.accessibilityservice.GestureDescription
+import android.app.KeyguardManager
+import android.content.BroadcastReceiver
 import android.content.ComponentName
 import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
 import android.content.res.Configuration
 import android.graphics.Path
+import android.os.Build
 import android.os.Handler
 import android.os.Looper
+import android.os.PowerManager
+import android.os.SystemClock
 import android.provider.Settings
 import android.view.accessibility.AccessibilityEvent
+import com.example.autoclicker.MainActivity
 import com.example.autoclicker.data.MacroProfile
 import com.example.autoclicker.data.MacroRepository
 import com.example.autoclicker.data.MacroPoint
@@ -24,18 +32,107 @@ class AutoClickAccessibilityService : AccessibilityService() {
     private lateinit var overlayController: ClickOverlayController
     private var isDestroyed = false
     private var actionGeneration = 0L
+    private var foregroundPackage: String? = null
+    private var macroTargetPackage: String? = null
+    private var pendingTileStart = false
+    private var pendingTileStartRequestedAt = 0L
+    private var pendingTileTargetPackage: String? = null
+    private var stoppedForSystemUi = false
+    private var systemUiVisible = false
+    private var screenReceiverRegistered = false
+    private val keyguardManager by lazy { getSystemService(KeyguardManager::class.java) }
+    private val powerManager by lazy { getSystemService(PowerManager::class.java) }
+    private val screenOffReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            if (intent?.action != Intent.ACTION_SCREEN_OFF) return
+            foregroundPackage = null
+            pendingTileStart = false
+            pendingTileStartRequestedAt = 0L
+            pendingTileTargetPackage = null
+            stoppedForSystemUi = false
+            systemUiVisible = false
+            if (::overlayController.isInitialized && overlayController.isMacroActive()) {
+                overlayController.stopForScreenOff()
+            }
+            notifyTileStateChanged()
+        }
+    }
 
     override fun onServiceConnected() {
         super.onServiceConnected()
         isDestroyed = false
+        foregroundPackage = null
+        macroTargetPackage = null
+        pendingTileStart = false
+        pendingTileStartRequestedAt = 0L
+        pendingTileTargetPackage = null
+        stoppedForSystemUi = false
+        systemUiVisible = false
         instance = this
+        registerScreenOffReceiver()
+        if (::overlayController.isInitialized) {
+            overlayController.stopClicking()
+            notifyTileStateChanged()
+            return
+        }
         repository = MacroRepository(this)
         overlayController = ClickOverlayController(this) { updatedProfile ->
             repository.updateProfilePoints(updatedProfile.name, updatedProfile.points)
         }
     }
 
-    override fun onAccessibilityEvent(event: AccessibilityEvent?) = Unit
+    override fun onAccessibilityEvent(event: AccessibilityEvent?) {
+        val currentEvent = event ?: return
+        if (currentEvent.eventType != AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) return
+        val observedPackage = currentEvent.packageName?.toString()?.takeIf { it.isNotBlank() } ?: return
+        val ownActivityOpened = observedPackage == packageName &&
+            currentEvent.className?.toString() == MainActivity::class.java.name
+        val eligibleTarget = observedPackage != packageName && observedPackage != SYSTEM_UI_PACKAGE
+
+        when {
+            ownActivityOpened -> {
+                foregroundPackage = null
+                systemUiVisible = false
+                cancelPendingTileStart()
+                if (::overlayController.isInitialized && overlayController.isMacroActive()) {
+                    overlayController.stopForForegroundChange()
+                }
+            }
+            observedPackage == SYSTEM_UI_PACKAGE -> {
+                systemUiVisible = true
+                if (::overlayController.isInitialized && overlayController.isMacroActive()) {
+                    stoppedForSystemUi = true
+                    overlayController.stopForForegroundChange()
+                }
+            }
+            eligibleTarget -> {
+                foregroundPackage = observedPackage
+                systemUiVisible = false
+                if (!pendingTileStart) stoppedForSystemUi = false
+                if (pendingTileStart) {
+                    val matchesRequestedTarget = observedPackage == pendingTileTargetPackage &&
+                        currentEvent.eventTime > pendingTileStartRequestedAt
+                    if (matchesRequestedTarget && canDispatchGestures()) {
+                        clearPendingTileStart()
+                        overlayController.toggleFromTile()
+                        notifyTileStateChanged()
+                    } else if (currentEvent.eventTime > pendingTileStartRequestedAt &&
+                        observedPackage != pendingTileTargetPackage
+                    ) {
+                        clearPendingTileStart()
+                        notifyTileStateChanged()
+                    }
+                    return
+                }
+                val targetPackage = macroTargetPackage
+                if (targetPackage != null && observedPackage != targetPackage &&
+                    ::overlayController.isInitialized && overlayController.isMacroActive()
+                ) {
+                    overlayController.stopForForegroundChange()
+                }
+            }
+        }
+    }
 
     override fun onInterrupt() {
         if (::overlayController.isInitialized) overlayController.stopClicking()
@@ -48,19 +145,53 @@ class AutoClickAccessibilityService : AccessibilityService() {
 
     override fun onDestroy() {
         isDestroyed = true
+        foregroundPackage = null
+        macroTargetPackage = null
+        pendingTileStart = false
+        pendingTileStartRequestedAt = 0L
+        pendingTileTargetPackage = null
+        stoppedForSystemUi = false
+        systemUiVisible = false
         mainHandler.removeCallbacksAndMessages(null)
         if (::overlayController.isInitialized) overlayController.destroy()
+        if (screenReceiverRegistered) {
+            runCatching { unregisterReceiver(screenOffReceiver) }
+            screenReceiverRegistered = false
+        }
         if (instance === this) instance = null
         notifyTileStateChanged()
         super.onDestroy()
     }
 
-    fun showProfile(profile: MacroProfile) {
+    private fun registerScreenOffReceiver() {
+        if (screenReceiverRegistered) return
+        val filter = IntentFilter(Intent.ACTION_SCREEN_OFF)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            registerReceiver(screenOffReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
+        } else {
+            @Suppress("DEPRECATION")
+            registerReceiver(screenOffReceiver, filter)
+        }
+        screenReceiverRegistered = true
+    }
+
+    private fun clearPendingTileStart() {
+        pendingTileStart = false
+        pendingTileStartRequestedAt = 0L
+        pendingTileTargetPackage = null
+    }
+
+    private fun cancelPendingTileStart() {
+        if (!pendingTileStart) return
+        clearPendingTileStart()
+        notifyTileStateChanged()
+    }
+
+    fun showProfile(profile: MacroProfile, onResult: (Boolean) -> Unit = {}) {
         mainHandler.post {
-            if (!isDestroyed && ::overlayController.isInitialized) {
-                repository.setActiveProfile(profile.name)
-                overlayController.show(profile)
-            }
+            val shown = !isDestroyed && ::overlayController.isInitialized && overlayController.show(profile)
+            if (shown) repository.setActiveProfile(profile.name)
+            onResult(shown)
         }
     }
 
@@ -84,11 +215,43 @@ class AutoClickAccessibilityService : AccessibilityService() {
         }
     }
 
-    fun toggleFromTile(): Boolean =
-        !isDestroyed && ::overlayController.isInitialized && overlayController.toggleFromTile()
+    fun toggleFromTile(): Boolean {
+        if (isDestroyed || !::overlayController.isInitialized) return false
+        if (pendingTileStart) {
+            clearPendingTileStart()
+            notifyTileStateChanged()
+            return true
+        }
+        if (overlayController.isMacroActive()) return overlayController.toggleFromTile()
+        if (stoppedForSystemUi) {
+            stoppedForSystemUi = false
+            notifyTileStateChanged()
+            return true
+        }
+        if (!overlayController.hasLoadedProfile()) return false
+        val requestedTarget = foregroundPackage ?: return false
+        macroTargetPackage = null
+        pendingTileTargetPackage = requestedTarget
+        pendingTileStartRequestedAt = SystemClock.uptimeMillis()
+        pendingTileStart = true
+        val requestTime = pendingTileStartRequestedAt
+        mainHandler.postDelayed({
+            if (pendingTileStart && pendingTileStartRequestedAt == requestTime) {
+                clearPendingTileStart()
+                notifyTileStateChanged()
+            }
+        }, TILE_START_TIMEOUT_MS)
+        notifyTileStateChanged()
+        return true
+    }
 
     fun isMacroActive(): Boolean =
-        !isDestroyed && ::overlayController.isInitialized && overlayController.isMacroActive()
+        !isDestroyed && (pendingTileStart ||
+            (::overlayController.isInitialized && overlayController.isMacroActive()))
+
+    fun isMacroStartPending(): Boolean = !isDestroyed && pendingTileStart
+
+    fun wasStoppedForSystemUi(): Boolean = !isDestroyed && stoppedForSystemUi
 
     fun hasLoadedProfile(): Boolean =
         !isDestroyed && ::overlayController.isInitialized && overlayController.hasLoadedProfile()
@@ -96,6 +259,24 @@ class AutoClickAccessibilityService : AccessibilityService() {
     fun notifyTileStateChanged() {
         MacroTileService.requestRefresh(this)
     }
+
+    fun beginMacroRun(): Boolean {
+        if (!canDispatchGestures() || systemUiVisible) return false
+        val targetPackage = foregroundPackage ?: return false
+        macroTargetPackage = targetPackage
+        stoppedForSystemUi = false
+        return true
+    }
+
+    fun endMacroRun() {
+        macroTargetPackage = null
+    }
+
+    fun canDispatchGestures(): Boolean =
+        !isDestroyed && powerManager.isInteractive && !keyguardManager.isKeyguardLocked
+
+    fun isMacroTargetForeground(): Boolean =
+        macroTargetPackage != null && foregroundPackage == macroTargetPackage && !systemUiVisible
 
     fun cancelActiveAction() {
         actionGeneration++
@@ -131,7 +312,7 @@ class AutoClickAccessibilityService : AccessibilityService() {
         }
 
         fun dispatchSegment(index: Int, previousStroke: GestureDescription.StrokeDescription?): Boolean {
-            if (generation != actionGeneration || isDestroyed) return false
+            if (generation != actionGeneration || !canDispatchGestures() || !isMacroTargetForeground()) return false
             val segmentStartMs = index * MAX_SEGMENT_DURATION_MS
             val segmentDuration = minOf(MAX_SEGMENT_DURATION_MS, totalDuration - segmentStartMs)
             val startFraction = segmentStartMs.toFloat() / totalDuration
@@ -194,5 +375,7 @@ class AutoClickAccessibilityService : AccessibilityService() {
 
         private const val TAP_DURATION_MS = 40L
         private const val MAX_SEGMENT_DURATION_MS = 500L
+        private const val SYSTEM_UI_PACKAGE = "com.android.systemui"
+        private const val TILE_START_TIMEOUT_MS = 10_000L
     }
 }

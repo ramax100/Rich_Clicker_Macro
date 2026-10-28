@@ -67,12 +67,12 @@ class ClickOverlayController(
     private lateinit var markerVisibilityButton: Button
     private lateinit var delayLabel: TextView
 
-    fun show(profile: MacroProfile) {
+    fun show(profile: MacroProfile): Boolean {
         dismissDelayDialog()
         stopClicking()
         if (!removeAllTargets()) {
             Toast.makeText(service, "Editor lama belum dapat dibersihkan", Toast.LENGTH_SHORT).show()
-            return
+            return false
         }
 
         currentProfile = profile
@@ -87,22 +87,23 @@ class ClickOverlayController(
             removeAllTargets()
             currentProfile = null
             Toast.makeText(service, "Profil tidak dapat ditampilkan sepenuhnya", Toast.LENGTH_SHORT).show()
-            return
+            return false
         }
         if (controlsView == null && !addControls()) {
             removeAllTargets()
             currentProfile = null
-            return
+            return false
         }
         selectedIndex = 0
         selectTarget(0)
         updateControls()
         service.notifyTileStateChanged()
-        Toast.makeText(service, "Profil ${profile.name} aktif di atas aplikasi lain", Toast.LENGTH_SHORT).show()
+        return true
     }
 
     fun stopClicking() {
         service.cancelActiveAction()
+        service.endMacroRun()
         runGeneration++
         runState = RunState.IDLE
         handler.removeCallbacksAndMessages(null)
@@ -120,45 +121,101 @@ class ClickOverlayController(
         service.notifyTileStateChanged()
     }
 
+    fun stopForForegroundChange() {
+        if (runState != RunState.IDLE) {
+            stopWithMessage("Aplikasi aktif berubah; macro dihentikan")
+        }
+    }
+
+    fun stopForScreenOff() {
+        if (runState != RunState.IDLE) {
+            stopWithMessage("Layar tidak aktif; macro dihentikan")
+        }
+    }
+
     fun onConfigurationChanged() {
+        dismissDelayDialog()
         val stoppedActiveMacro = runState != RunState.IDLE
         if (stoppedActiveMacro) stopClicking()
+        val markerSize = dp(TARGET_TOUCH_SIZE_DP)
+        var allMarkersUpdated = true
         targets.forEach { holder ->
+            val oldStart = intArrayOf(
+                holder.params.x,
+                holder.params.y,
+                holder.params.width,
+                holder.params.height
+            )
+            holder.params.width = markerSize
+            holder.params.height = markerSize
             applyNormalizedPosition(holder)
-            runCatching { windowManager.updateViewLayout(holder.view, holder.params) }
-            applyEndpointNormalizedPosition(holder)
-            val endView = holder.endView
+            if (runCatching { windowManager.updateViewLayout(holder.view, holder.params) }.isFailure) {
+                holder.params.x = oldStart[0]
+                holder.params.y = oldStart[1]
+                holder.params.width = oldStart[2]
+                holder.params.height = oldStart[3]
+                allMarkersUpdated = false
+            }
             val endParams = holder.endParams
-            if (endView != null && endParams != null) {
-                runCatching { windowManager.updateViewLayout(endView, endParams) }
+            val endView = holder.endView
+            if (endParams != null && endView != null) {
+                val oldEnd = intArrayOf(endParams.x, endParams.y, endParams.width, endParams.height)
+                endParams.width = markerSize
+                endParams.height = markerSize
+                applyEndpointNormalizedPosition(holder)
+                if (runCatching { windowManager.updateViewLayout(endView, endParams) }.isFailure) {
+                    endParams.x = oldEnd[0]
+                    endParams.y = oldEnd[1]
+                    endParams.width = oldEnd[2]
+                    endParams.height = oldEnd[3]
+                    allMarkersUpdated = false
+                }
             }
         }
-        controlsView?.post { clampToolbarToDisplay() }
+        if (!allMarkersUpdated) {
+            Toast.makeText(service, "Sebagian marker gagal menyesuaikan layar", Toast.LENGTH_SHORT).show()
+        }
+        val bounds = displayBounds()
+        val controls = controlsView
+        val params = controlsParams
+        if (controls != null && params != null) {
+            val oldWidth = params.width
+            params.width = toolbarWidth(bounds)
+            runCatching { windowManager.updateViewLayout(controls, params) }
+                .onFailure {
+                    params.width = oldWidth
+                    Toast.makeText(service, "Toolbar gagal menyesuaikan layar", Toast.LENGTH_SHORT).show()
+                }
+            controls.post { clampToolbarToDisplay() }
+        }
         if (stoppedActiveMacro) {
             Toast.makeText(service, "Konfigurasi layar berubah; macro dihentikan", Toast.LENGTH_SHORT).show()
         }
     }
 
-    fun destroy() {
+    fun destroy(): Boolean {
         dismissDelayDialog()
         stopClicking()
         if (!removeAllTargets()) {
             Toast.makeText(service, "Sebagian overlay belum dapat ditutup. Coba lagi.", Toast.LENGTH_SHORT).show()
-            return
+            return false
         }
         controlsView?.let { controls ->
-            if (removeViewSafely(controls)) {
-                controlsView = null
-                controlsParams = null
-                editorContent = null
-                toolbarHandle = null
+            if (!removeViewSafely(controls)) {
+                Toast.makeText(service, "Toolbar belum dapat ditutup. Coba lagi.", Toast.LENGTH_SHORT).show()
+                return false
             }
+            controlsView = null
+            controlsParams = null
+            editorContent = null
+            toolbarHandle = null
         }
         currentProfile = null
         selectedIndex = 0
         isToolbarCollapsed = false
         markersHidden = false
         service.notifyTileStateChanged()
+        return true
     }
 
     fun closeIfProfile(profileName: String) {
@@ -169,7 +226,9 @@ class ClickOverlayController(
         val current = currentProfile ?: return
         if (current.name == profile.name) {
             currentProfile = profile.copy(points = current.points)
-            if (runState != RunState.IDLE) applyKeepScreenOn(profile.keepScreenOn)
+            if (runState != RunState.IDLE) {
+                stopWithMessage("Pengaturan profil berubah; macro dihentikan")
+            }
         }
     }
 
@@ -270,12 +329,16 @@ class ClickOverlayController(
         }
 
         val removed = targets[selectedIndex]
+        val hadEndpoint = removed.endView != null
         val endpointRemoved = removed.endView?.let(::removeViewSafely) ?: true
         if (endpointRemoved) {
             removed.endView = null
             removed.endParams = null
         }
         if (!endpointRemoved || !removeViewSafely(removed.view)) {
+            if (endpointRemoved && hadEndpoint && removed.actionType == PointActionType.SWIPE) {
+                addEndpoint(removed, selectedIndex + 1)
+            }
             Toast.makeText(service, "Titik gagal dihapus. Coba tutup editor.", Toast.LENGTH_SHORT).show()
             return
         }
@@ -328,10 +391,18 @@ class ClickOverlayController(
             contentDescription = "Geser toolbar atau ketuk untuk menciutkan"
         }
         attachToolbarDragHandler(handle)
-        controls.addView(handle, LinearLayout.LayoutParams(
-            LinearLayout.LayoutParams.MATCH_PARENT,
-            LinearLayout.LayoutParams.WRAP_CONTENT
-        ))
+        stopButton = controlButton("■", "Hentikan macro") { stopClicking() }
+        val headerRow = horizontalRow().apply {
+            addView(handle, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+            addView(stopButton)
+        }
+        controls.addView(
+            headerRow,
+            LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            )
+        )
 
         val content = LinearLayout(service).apply {
             orientation = LinearLayout.VERTICAL
@@ -341,12 +412,11 @@ class ClickOverlayController(
         val primaryActionRow = horizontalRow()
         val secondaryActionRow = horizontalRow()
         playButton = controlButton("▶", "Mulai macro") { startClicking() }
-        stopButton = controlButton("■", "Hentikan macro") { stopClicking() }
         addButton = controlButton("+", "Tambah titik") { addNewTarget() }
         removeButton = controlButton("−", "Hapus titik terpilih") { removeSelectedTarget() }
         val closeButton = controlButton("×", "Tutup editor macro") { destroy() }
         markerVisibilityButton = controlButton("◉", "Sembunyikan atau tampilkan marker") { toggleMarkers() }
-        listOf(playButton, stopButton, addButton).forEach(primaryActionRow::addView)
+        listOf(playButton, addButton).forEach(primaryActionRow::addView)
         listOf(removeButton, markerVisibilityButton, closeButton).forEach(secondaryActionRow::addView)
 
         val orderRow = horizontalRow()
@@ -356,7 +426,8 @@ class ClickOverlayController(
             gravity = Gravity.CENTER
             setTextColor(Color.WHITE)
             setTypeface(typeface, Typeface.BOLD)
-            minWidth = dp(145f)
+            minimumWidth = 0
+            minWidth = 0
             setPadding(dp(5f), dp(6f), dp(5f), dp(6f))
             contentDescription = "Ketuk untuk memasukkan jeda langsung"
             setOnClickListener { showDelayInputDialog() }
@@ -367,7 +438,10 @@ class ClickOverlayController(
         }
         moveDownButton = controlButton("↓", "Turunkan urutan titik") { moveSelectedPoint(1) }
         orderRow.addView(moveUpButton)
-        orderRow.addView(delayLabel)
+        orderRow.addView(
+            delayLabel,
+            LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+        )
         orderRow.addView(moveDownButton)
 
         val delayRow = horizontalRow()
@@ -380,9 +454,12 @@ class ClickOverlayController(
         actionButton = settingButton("Tap", "Ubah jenis aksi") { cycleSelectedAction() }
         durationButton = settingButton("0.7 dtk", "Atur durasi aksi") { showDurationDialog() }
         repeatButton = settingButton("×1", "Atur jumlah pengulangan") { showRepeatDialog() }
-        gestureRow.addView(actionButton)
-        gestureRow.addView(durationButton)
-        gestureRow.addView(repeatButton)
+        listOf(actionButton, durationButton, repeatButton).forEach { button ->
+            gestureRow.addView(
+                button,
+                LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+            )
+        }
 
         content.addView(primaryActionRow)
         content.addView(secondaryActionRow)
@@ -392,10 +469,8 @@ class ClickOverlayController(
         controls.addView(content)
 
         val bounds = displayBounds()
-        val availablePanelWidth = (bounds.width() - dp(16f)).coerceAtLeast(1)
-        val panelWidth = minOf(dp(260f), availablePanelWidth)
         val params = WindowManager.LayoutParams(
-            panelWidth,
+            toolbarWidth(bounds),
             WindowManager.LayoutParams.WRAP_CONTENT,
             WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
@@ -422,7 +497,14 @@ class ClickOverlayController(
         dismissDelayDialog()
         val profile = currentProfile ?: return
         if (runState != RunState.IDLE || targets.isEmpty()) return
-        if (isToolbarCollapsed) toggleToolbar()
+        if (!service.beginMacroRun()) {
+            Toast.makeText(
+                service,
+                "Buka aplikasi target dan pastikan layar tidak terkunci",
+                Toast.LENGTH_SHORT
+            ).show()
+            return
+        }
 
         runGeneration++
         val generation = runGeneration
@@ -430,6 +512,9 @@ class ClickOverlayController(
         currentRepeatIndex = 0
         completedLoops = 0
         runState = if (profile.countdownSeconds > 0) RunState.COUNTDOWN else RunState.RUNNING
+        if (runState == RunState.COUNTDOWN) {
+            delayLabel.text = "Mulai dalam ${profile.countdownSeconds}…"
+        }
         targets.forEach {
             it.view.isMacroRunning = true
             it.endView?.isMacroRunning = true
@@ -439,7 +524,10 @@ class ClickOverlayController(
             stopWithMessage("Target tidak dapat disiapkan oleh sistem")
             return
         }
-        applyKeepScreenOn(profile.keepScreenOn)
+        if (!applyKeepScreenOn(profile.keepScreenOn)) {
+            stopWithMessage("Pengaturan layar tetap menyala gagal diterapkan")
+            return
+        }
         updateControls()
         service.notifyTileStateChanged()
 
@@ -454,6 +542,14 @@ class ClickOverlayController(
 
     private fun runCountdown(remainingSeconds: Int, generation: Long) {
         if (runState != RunState.COUNTDOWN || generation != runGeneration) return
+        if (!service.canDispatchGestures()) {
+            stopWithMessage("Layar terkunci atau tidak aktif; macro dihentikan")
+            return
+        }
+        if (!service.isMacroTargetForeground()) {
+            stopWithMessage("Aplikasi target tidak aktif; macro dihentikan")
+            return
+        }
         if (remainingSeconds <= 0) {
             runState = RunState.RUNNING
             updateControls()
@@ -466,6 +562,14 @@ class ClickOverlayController(
 
     private fun executeCurrentPoint(generation: Long) {
         if (runState != RunState.RUNNING || generation != runGeneration || targets.isEmpty()) return
+        if (!service.canDispatchGestures()) {
+            stopWithMessage("Layar terkunci atau tidak aktif; macro dihentikan")
+            return
+        }
+        if (!service.isMacroTargetForeground()) {
+            stopWithMessage("Aplikasi target tidak aktif; macro dihentikan")
+            return
+        }
 
         val point = targets[currentIndex]
         if (point.view.width <= 0 || point.view.height <= 0 ||
@@ -536,14 +640,13 @@ class ClickOverlayController(
                         return@performAction
                     }
                 }
-                val waitAfterPoint = if (wasLastPoint) {
-                    currentProfile?.loopDelayMs ?: point.delayMs
-                } else {
-                    point.delayMs
-                }
+                val loopDelay = if (wasLastPoint) currentProfile?.loopDelayMs ?: 0L else 0L
+                val waitAfterPoint = point.delayMs + loopDelay
                 currentIndex = (currentIndex + 1) % targets.size
                 if (wasLastPoint) {
-                    delayLabel.text = "Jeda loop • ${ClickPreferences.formatDelaySeconds(waitAfterPoint)} dtk"
+                    delayLabel.text = "Jeda titik + loop • " +
+                        "${ClickPreferences.formatDelaySeconds(point.delayMs)} + " +
+                        "${ClickPreferences.formatDelaySeconds(loopDelay)} dtk"
                 } else {
                     updateControls()
                 }
@@ -564,16 +667,16 @@ class ClickOverlayController(
         Toast.makeText(service, message, Toast.LENGTH_SHORT).show()
     }
 
-    private fun applyKeepScreenOn(enabled: Boolean) {
-        val controls = controlsView ?: return
-        val params = controlsParams ?: return
+    private fun applyKeepScreenOn(enabled: Boolean): Boolean {
+        val controls = controlsView ?: return !enabled
+        val params = controlsParams ?: return !enabled
         params.flags = if (enabled) {
             params.flags or WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON
         } else {
             params.flags and WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON.inv()
         }
         controls.keepScreenOn = enabled
-        runCatching { windowManager.updateViewLayout(controls, params) }
+        return runCatching { windowManager.updateViewLayout(controls, params) }.isSuccess
     }
 
     private fun showDelayInputDialog() {
@@ -617,8 +720,13 @@ class ClickOverlayController(
     }
 
     private fun dismissDelayDialog() {
-        delayDialog?.let { dialog -> runCatching { dialog.dismiss() } }
-        delayDialog = null
+        val dialog = delayDialog ?: return
+        val dismissed = runCatching { dialog.dismiss() }.isSuccess
+        if (!dismissed && dialog.isShowing) {
+            Toast.makeText(service, "Dialog belum dapat ditutup", Toast.LENGTH_SHORT).show()
+        } else if (delayDialog === dialog) {
+            delayDialog = null
+        }
     }
 
     private fun selectTarget(index: Int) {
@@ -770,13 +878,21 @@ class ClickOverlayController(
         var allUpdated = true
         val effectiveTouchable = touchable && !markersHidden
         targets.forEach { holder ->
+            val oldStartFlags = holder.params.flags
             holder.params.flags = touchFlags(holder.params.flags, effectiveTouchable)
-            if (runCatching { windowManager.updateViewLayout(holder.view, holder.params) }.isFailure) allUpdated = false
+            if (runCatching { windowManager.updateViewLayout(holder.view, holder.params) }.isFailure) {
+                holder.params.flags = oldStartFlags
+                allUpdated = false
+            }
             val endView = holder.endView
             val endParams = holder.endParams
             if (endView != null && endParams != null) {
+                val oldEndFlags = endParams.flags
                 endParams.flags = touchFlags(endParams.flags, effectiveTouchable)
-                if (runCatching { windowManager.updateViewLayout(endView, endParams) }.isFailure) allUpdated = false
+                if (runCatching { windowManager.updateViewLayout(endView, endParams) }.isFailure) {
+                    endParams.flags = oldEndFlags
+                    allUpdated = false
+                }
             }
         }
         return allUpdated
@@ -846,6 +962,7 @@ class ClickOverlayController(
         var initialTouchX = 0f
         var initialTouchY = 0f
         var moved = false
+        var layoutUpdateFailed = false
         handle.setOnTouchListener { _, event ->
             val params = controlsParams
             val controls = controlsView
@@ -856,6 +973,7 @@ class ClickOverlayController(
                     initialTouchX = event.rawX
                     initialTouchY = event.rawY
                     moved = false
+                    layoutUpdateFailed = false
                     true
                 }
                 MotionEvent.ACTION_MOVE -> {
@@ -863,15 +981,24 @@ class ClickOverlayController(
                         val deltaX = event.rawX - initialTouchX
                         val deltaY = event.rawY - initialTouchY
                         moved = moved || kotlin.math.abs(deltaX) > dp(4f) || kotlin.math.abs(deltaY) > dp(4f)
+                        val previousX = params.x
+                        val previousY = params.y
                         params.x = initialX + deltaX.roundToInt()
                         params.y = initialY + deltaY.roundToInt()
                         clampToolbarParams(params, controls)
-                        runCatching { windowManager.updateViewLayout(controls, params) }
+                        if (runCatching { windowManager.updateViewLayout(controls, params) }.isFailure) {
+                            params.x = previousX
+                            params.y = previousY
+                            layoutUpdateFailed = true
+                        }
                     }
                     true
                 }
                 MotionEvent.ACTION_UP -> {
-                    if (!moved && (runState == RunState.IDLE || isToolbarCollapsed)) toggleToolbar()
+                    if (!moved) toggleToolbar()
+                    if (layoutUpdateFailed) {
+                        Toast.makeText(service, "Toolbar gagal dipindahkan", Toast.LENGTH_SHORT).show()
+                    }
                     clampToolbarToDisplay()
                     true
                 }
@@ -894,6 +1021,7 @@ class ClickOverlayController(
         var initialY = 0
         var initialTouchX = 0f
         var initialTouchY = 0f
+        var layoutUpdateFailed = false
         holder.view.setOnTouchListener { _, event ->
             when (event.actionMasked) {
                 MotionEvent.ACTION_DOWN -> {
@@ -904,18 +1032,28 @@ class ClickOverlayController(
                     initialY = holder.params.y
                     initialTouchX = event.rawX
                     initialTouchY = event.rawY
+                    layoutUpdateFailed = false
                     true
                 }
                 MotionEvent.ACTION_MOVE -> {
+                    val previousX = holder.params.x
+                    val previousY = holder.params.y
                     holder.params.x = initialX + (event.rawX - initialTouchX).roundToInt()
                     holder.params.y = initialY + (event.rawY - initialTouchY).roundToInt()
                     clampTarget(holder)
-                    runCatching { windowManager.updateViewLayout(holder.view, holder.params) }
+                    if (runCatching { windowManager.updateViewLayout(holder.view, holder.params) }.isFailure) {
+                        holder.params.x = previousX
+                        holder.params.y = previousY
+                        layoutUpdateFailed = true
+                    }
                     true
                 }
                 MotionEvent.ACTION_UP -> {
                     updateNormalizedPosition(holder)
                     persistProfile()
+                    if (layoutUpdateFailed) {
+                        Toast.makeText(service, "Titik tidak dapat dipindahkan sepenuhnya", Toast.LENGTH_SHORT).show()
+                    }
                     true
                 }
                 MotionEvent.ACTION_CANCEL -> {
@@ -939,6 +1077,7 @@ class ClickOverlayController(
         var initialY = 0
         var initialTouchX = 0f
         var initialTouchY = 0f
+        var layoutUpdateFailed = false
         endpoint.setOnTouchListener { _, event ->
             when (event.actionMasked) {
                 MotionEvent.ACTION_DOWN -> {
@@ -949,18 +1088,28 @@ class ClickOverlayController(
                     initialY = params.y
                     initialTouchX = event.rawX
                     initialTouchY = event.rawY
+                    layoutUpdateFailed = false
                     true
                 }
                 MotionEvent.ACTION_MOVE -> {
+                    val previousX = params.x
+                    val previousY = params.y
                     params.x = initialX + (event.rawX - initialTouchX).roundToInt()
                     params.y = initialY + (event.rawY - initialTouchY).roundToInt()
                     clampParams(params)
-                    runCatching { windowManager.updateViewLayout(endpoint, params) }
+                    if (runCatching { windowManager.updateViewLayout(endpoint, params) }.isFailure) {
+                        params.x = previousX
+                        params.y = previousY
+                        layoutUpdateFailed = true
+                    }
                     true
                 }
                 MotionEvent.ACTION_UP -> {
                     updateEndpointNormalizedPosition(holder)
                     persistProfile()
+                    if (layoutUpdateFailed) {
+                        Toast.makeText(service, "Endpoint tidak dapat dipindahkan sepenuhnya", Toast.LENGTH_SHORT).show()
+                    }
                     true
                 }
                 MotionEvent.ACTION_CANCEL -> {
@@ -1141,6 +1290,9 @@ class ClickOverlayController(
             y >= location[1] && y < location[1] + controls.height
     }
 
+    private fun toolbarWidth(bounds: Rect): Int =
+        minOf(dp(260f), (bounds.width() - dp(16f)).coerceAtLeast(1))
+
     private fun clampToolbarParams(params: WindowManager.LayoutParams, controls: View) {
         val bounds = displayBounds()
         val width = controls.width.takeIf { it > 0 } ?: params.width.takeIf { it > 0 } ?: dp(260f)
@@ -1181,6 +1333,9 @@ class ClickOverlayController(
             if (removeViewSafely(holder.view)) {
                 iterator.remove()
             } else {
+                if (holder.actionType == PointActionType.SWIPE && endpoint != null) {
+                    addEndpoint(holder, holder.view.sequenceNumber)
+                }
                 allRemoved = false
             }
         }
@@ -1218,8 +1373,8 @@ class ClickOverlayController(
         isAllCaps = false
         setTextColor(Color.WHITE)
         contentDescription = description
-        minimumWidth = dp(78f)
-        minWidth = dp(78f)
+        minimumWidth = 0
+        minWidth = 0
         minimumHeight = dp(36f)
         minHeight = dp(36f)
         setPadding(dp(4f), 0, dp(4f), 0)
@@ -1257,8 +1412,10 @@ class ClickOverlayController(
     }
 
     private fun removeViewSafely(view: View): Boolean {
-        if (!view.isAttachedToWindow) return true
-        return runCatching { windowManager.removeViewImmediate(view) }.isSuccess || !view.isAttachedToWindow
+        return runCatching {
+            windowManager.removeViewImmediate(view)
+            true
+        }.getOrElse { !view.isAttachedToWindow }
     }
 
     private fun dp(value: Float): Int = (value * service.resources.displayMetrics.density).roundToInt()
@@ -1290,7 +1447,8 @@ class ClickOverlayController(
 }
 
 private class MacroTargetView(context: Context) : View(context) {
-    private val density = resources.displayMetrics.density
+    private val density: Float
+        get() = resources.displayMetrics.density
     private val fillPaint = Paint(Paint.ANTI_ALIAS_FLAG)
     private val strokePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = Color.WHITE
@@ -1319,6 +1477,7 @@ private class MacroTargetView(context: Context) : View(context) {
         val centerX = width / 2f
         val centerY = height / 2f
         val radius = (if (isMacroRunning) 8f else 11f) * density
+        strokePaint.strokeWidth = 1.5f * density
         fillPaint.color = when {
             isActivePoint -> Color.rgb(34, 197, 94)
             isEndpoint -> Color.rgb(14, 165, 233)
