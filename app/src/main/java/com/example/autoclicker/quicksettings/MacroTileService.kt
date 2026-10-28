@@ -9,6 +9,7 @@ import android.service.quicksettings.Tile
 import android.service.quicksettings.TileService
 import com.example.autoclicker.MainActivity
 import com.example.autoclicker.accessibility.AutoClickAccessibilityService
+import com.example.autoclicker.diagnostics.DiagnosticLog
 
 class MacroTileService : TileService() {
     override fun onStartListening() {
@@ -19,6 +20,16 @@ class MacroTileService : TileService() {
     override fun onClick() {
         super.onClick()
         val accessibilityService = AutoClickAccessibilityService.instance
+        DiagnosticLog.record(
+            this,
+            "tile_clicked",
+            mapOf(
+                "locked" to isLocked,
+                "serviceAvailable" to (accessibilityService != null),
+                "macroActive" to (accessibilityService?.isMacroActive() == true),
+                "profileLoaded" to (accessibilityService?.hasLoadedProfile() == true)
+            )
+        )
         if (accessibilityService?.isMacroActive() == true) {
             accessibilityService.toggleFromTile()
             updateTileState()

@@ -83,6 +83,14 @@ Jika asset release tidak tampil, gunakan [download APK v0.6.3 langsung](https://
 - File import dan export dibatasi 2 MB agar hasil export yang berhasil selalu dapat diimpor kembali.
 - Data profil rusak dicadangkan sebelum profil Recovery digunakan.
 
+### Log diagnostik
+
+- Log lokal mencatat lifecycle service, aplikasi target, System UI, lockscreen, start/stop macro, hasil gesture, Quick Settings, dan kegagalan overlay.
+- Event disimpan secara internal sebagai JSON Lines dengan rotasi maksimal sekitar 512 KB dan tidak ikut Android Auto Backup. Pencatatan bersifat best-effort; penghentian proses mendadak dapat menghilangkan event terakhir.
+- Isi layar, teks accessibility, nama profil, dan koordinat marker tidak dicatat. Nama package aplikasi dicatat agar perpindahan target dapat dikenali.
+- Log dapat dilihat atau diekspor dari kartu **Log Diagnostik**. File export dapat dibaca oleh document provider/lokasi yang dipilih pengguna.
+- Log hanya menjelaskan observasi Rich Clicker. Force close internal aplikasi lain tetap memerlukan `adb logcat` atau bug report perangkat.
+
 ### Kontrol dan stabilitas
 
 - Tombol mulai dan berhenti tersedia di toolbar.

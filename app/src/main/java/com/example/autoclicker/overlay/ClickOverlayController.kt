@@ -26,6 +26,7 @@ import com.example.autoclicker.data.ClickPreferences
 import com.example.autoclicker.data.MacroPoint
 import com.example.autoclicker.data.MacroProfile
 import com.example.autoclicker.data.PointActionType
+import com.example.autoclicker.diagnostics.DiagnosticLog
 import kotlin.math.ceil
 import kotlin.math.floor
 import kotlin.math.roundToInt
@@ -68,9 +69,15 @@ class ClickOverlayController(
     private lateinit var delayLabel: TextView
 
     fun show(profile: MacroProfile): Boolean {
+        DiagnosticLog.record(
+            service,
+            "editor_show_started",
+            mapOf("pointCount" to profile.points.size)
+        )
         dismissDelayDialog()
-        stopClicking()
+        stopClicking("editor_replaced")
         if (!removeAllTargets()) {
+            DiagnosticLog.record(service, "editor_show_failed", mapOf("reason" to "old_overlay_cleanup"))
             Toast.makeText(service, "Editor lama belum dapat dibersihkan", Toast.LENGTH_SHORT).show()
             return false
         }
@@ -86,22 +93,39 @@ class ClickOverlayController(
         if (!allTargetsAdded || (targets.isEmpty() && !addTarget(createPoint(profile.defaultDelayMs), persist = false))) {
             removeAllTargets()
             currentProfile = null
+            DiagnosticLog.record(service, "editor_show_failed", mapOf("reason" to "target_setup"))
             Toast.makeText(service, "Profil tidak dapat ditampilkan sepenuhnya", Toast.LENGTH_SHORT).show()
             return false
         }
         if (controlsView == null && !addControls()) {
             removeAllTargets()
             currentProfile = null
+            DiagnosticLog.record(service, "editor_show_failed", mapOf("reason" to "toolbar_setup"))
             return false
         }
         selectedIndex = 0
         selectTarget(0)
         updateControls()
         service.notifyTileStateChanged()
+        DiagnosticLog.record(service, "editor_show_succeeded", mapOf("pointCount" to profile.points.size))
         return true
     }
 
-    fun stopClicking() {
+    fun stopClicking(reason: String = "requested") {
+        val previousState = runState
+        if (previousState != RunState.IDLE) {
+            DiagnosticLog.record(
+                service,
+                "macro_stopped",
+                mapOf(
+                    "reason" to reason,
+                    "state" to previousState.name,
+                    "point" to (currentIndex + 1),
+                    "repeat" to (currentRepeatIndex + 1),
+                    "completedLoops" to completedLoops
+                )
+            )
+        }
         service.cancelActiveAction()
         service.endMacroRun()
         runGeneration++
@@ -123,20 +147,26 @@ class ClickOverlayController(
 
     fun stopForForegroundChange() {
         if (runState != RunState.IDLE) {
-            stopWithMessage("Aplikasi aktif berubah; macro dihentikan")
+            stopWithMessage("Aplikasi aktif berubah; macro dihentikan", "foreground_changed")
+        }
+    }
+
+    fun stopForSystemUi() {
+        if (runState != RunState.IDLE) {
+            stopWithMessage("System UI dibuka; macro dihentikan", "system_ui")
         }
     }
 
     fun stopForScreenOff() {
         if (runState != RunState.IDLE) {
-            stopWithMessage("Layar tidak aktif; macro dihentikan")
+            stopWithMessage("Layar tidak aktif; macro dihentikan", "screen_off")
         }
     }
 
     fun onConfigurationChanged() {
         dismissDelayDialog()
         val stoppedActiveMacro = runState != RunState.IDLE
-        if (stoppedActiveMacro) stopClicking()
+        if (stoppedActiveMacro) stopClicking("configuration_changed")
         val markerSize = dp(TARGET_TOUCH_SIZE_DP)
         var allMarkersUpdated = true
         targets.forEach { holder ->
@@ -194,14 +224,17 @@ class ClickOverlayController(
     }
 
     fun destroy(): Boolean {
+        DiagnosticLog.record(service, "editor_close_requested")
         dismissDelayDialog()
-        stopClicking()
+        stopClicking("editor_closed")
         if (!removeAllTargets()) {
+            DiagnosticLog.record(service, "editor_close_failed", mapOf("reason" to "target_cleanup"))
             Toast.makeText(service, "Sebagian overlay belum dapat ditutup. Coba lagi.", Toast.LENGTH_SHORT).show()
             return false
         }
         controlsView?.let { controls ->
             if (!removeViewSafely(controls)) {
+                DiagnosticLog.record(service, "editor_close_failed", mapOf("reason" to "toolbar_cleanup"))
                 Toast.makeText(service, "Toolbar belum dapat ditutup. Coba lagi.", Toast.LENGTH_SHORT).show()
                 return false
             }
@@ -215,6 +248,7 @@ class ClickOverlayController(
         isToolbarCollapsed = false
         markersHidden = false
         service.notifyTileStateChanged()
+        DiagnosticLog.record(service, "editor_closed")
         return true
     }
 
@@ -227,14 +261,14 @@ class ClickOverlayController(
         if (current.name == profile.name) {
             currentProfile = profile.copy(points = current.points)
             if (runState != RunState.IDLE) {
-                stopWithMessage("Pengaturan profil berubah; macro dihentikan")
+                stopWithMessage("Pengaturan profil berubah; macro dihentikan", "profile_settings_changed")
             }
         }
     }
 
     fun toggleFromTile(): Boolean {
         if (currentProfile == null || targets.isEmpty()) return false
-        if (runState == RunState.IDLE) startClicking() else stopClicking()
+        if (runState == RunState.IDLE) startClicking() else stopClicking("quick_settings")
         return true
     }
 
@@ -276,6 +310,7 @@ class ClickOverlayController(
         attachDragHandler(holder)
 
         if (runCatching { windowManager.addView(target, params) }.isFailure) {
+            DiagnosticLog.record(service, "overlay_add_failed", mapOf("overlay" to "marker"))
             Toast.makeText(service, "Titik tidak dapat ditambahkan oleh sistem", Toast.LENGTH_SHORT).show()
             return false
         }
@@ -302,7 +337,10 @@ class ClickOverlayController(
         val params = createMarkerLayoutParams(holder.endNormalizedX, holder.endNormalizedY)
         if (markersHidden) params.flags = params.flags or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
         attachEndpointDragHandler(holder, endpoint, params)
-        if (runCatching { windowManager.addView(endpoint, params) }.isFailure) return false
+        if (runCatching { windowManager.addView(endpoint, params) }.isFailure) {
+            DiagnosticLog.record(service, "overlay_add_failed", mapOf("overlay" to "swipe_endpoint"))
+            return false
+        }
         holder.endView = endpoint
         holder.endParams = params
         return true
@@ -391,7 +429,7 @@ class ClickOverlayController(
             contentDescription = "Geser toolbar atau ketuk untuk menciutkan"
         }
         attachToolbarDragHandler(handle)
-        stopButton = controlButton("■", "Hentikan macro") { stopClicking() }
+        stopButton = controlButton("■", "Hentikan macro") { stopClicking("toolbar") }
         val headerRow = horizontalRow().apply {
             addView(handle, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
             addView(stopButton)
@@ -482,6 +520,7 @@ class ClickOverlayController(
         }
 
         if (runCatching { windowManager.addView(controls, params) }.isFailure) {
+            DiagnosticLog.record(service, "overlay_add_failed", mapOf("overlay" to "toolbar"))
             Toast.makeText(service, "Kontrol macro tidak dapat ditampilkan", Toast.LENGTH_SHORT).show()
             return false
         }
@@ -497,6 +536,11 @@ class ClickOverlayController(
         dismissDelayDialog()
         val profile = currentProfile ?: return
         if (runState != RunState.IDLE || targets.isEmpty()) return
+        DiagnosticLog.record(
+            service,
+            "macro_start_requested",
+            mapOf("pointCount" to targets.size)
+        )
         if (!service.beginMacroRun()) {
             Toast.makeText(
                 service,
@@ -512,6 +556,11 @@ class ClickOverlayController(
         currentRepeatIndex = 0
         completedLoops = 0
         runState = if (profile.countdownSeconds > 0) RunState.COUNTDOWN else RunState.RUNNING
+        DiagnosticLog.record(
+            service,
+            "macro_started",
+            mapOf("state" to runState.name, "countdownSeconds" to profile.countdownSeconds)
+        )
         if (runState == RunState.COUNTDOWN) {
             delayLabel.text = "Mulai dalam ${profile.countdownSeconds}…"
         }
@@ -521,11 +570,11 @@ class ClickOverlayController(
         }
 
         if (!setTargetsTouchable(false)) {
-            stopWithMessage("Target tidak dapat disiapkan oleh sistem")
+            stopWithMessage("Target tidak dapat disiapkan oleh sistem", "target_touchability_failed")
             return
         }
         if (!applyKeepScreenOn(profile.keepScreenOn)) {
-            stopWithMessage("Pengaturan layar tetap menyala gagal diterapkan")
+            stopWithMessage("Pengaturan layar tetap menyala gagal diterapkan", "keep_screen_on_failed")
             return
         }
         updateControls()
@@ -543,11 +592,11 @@ class ClickOverlayController(
     private fun runCountdown(remainingSeconds: Int, generation: Long) {
         if (runState != RunState.COUNTDOWN || generation != runGeneration) return
         if (!service.canDispatchGestures()) {
-            stopWithMessage("Layar terkunci atau tidak aktif; macro dihentikan")
+            stopWithMessage("Layar terkunci atau tidak aktif; macro dihentikan", "screen_locked_or_inactive")
             return
         }
         if (!service.isMacroTargetForeground()) {
-            stopWithMessage("Aplikasi target tidak aktif; macro dihentikan")
+            stopWithMessage("Aplikasi target tidak aktif; macro dihentikan", "target_not_foreground")
             return
         }
         if (remainingSeconds <= 0) {
@@ -563,11 +612,11 @@ class ClickOverlayController(
     private fun executeCurrentPoint(generation: Long) {
         if (runState != RunState.RUNNING || generation != runGeneration || targets.isEmpty()) return
         if (!service.canDispatchGestures()) {
-            stopWithMessage("Layar terkunci atau tidak aktif; macro dihentikan")
+            stopWithMessage("Layar terkunci atau tidak aktif; macro dihentikan", "screen_locked_or_inactive")
             return
         }
         if (!service.isMacroTargetForeground()) {
-            stopWithMessage("Aplikasi target tidak aktif; macro dihentikan")
+            stopWithMessage("Aplikasi target tidak aktif; macro dihentikan", "target_not_foreground")
             return
         }
 
@@ -575,7 +624,7 @@ class ClickOverlayController(
         if (point.view.width <= 0 || point.view.height <= 0 ||
             (point.actionType == PointActionType.SWIPE && point.endView == null)
         ) {
-            stopWithMessage("Posisi titik belum siap. Coba mulai kembali.")
+            stopWithMessage("Posisi titik belum siap. Coba mulai kembali.", "marker_not_ready")
             return
         }
 
@@ -605,15 +654,17 @@ class ClickOverlayController(
             start
         }
         if (start == null || end == null) {
-            stopWithMessage("Posisi marker tidak dapat diverifikasi. Macro dihentikan.")
+            stopWithMessage("Posisi marker tidak dapat diverifikasi. Macro dihentikan.", "marker_position_invalid")
             return
         }
         if (isCoveredByControls(start.first, start.second)) {
-            stopWithMessage("Titik tertutup menu. Pindahkan menu lalu mulai kembali.")
+            stopWithMessage("Titik tertutup menu. Pindahkan menu lalu mulai kembali.", "marker_covered_by_controls")
             return
         }
 
         val accepted = service.performAction(
+            pointNumber = currentIndex + 1,
+            repeatIndex = currentRepeatIndex + 1,
             actionType = point.actionType,
             startX = start.first,
             startY = start.second,
@@ -636,7 +687,7 @@ class ClickOverlayController(
                     completedLoops++
                     val limit = currentProfile?.loopLimit ?: 0
                     if (limit > 0 && completedLoops >= limit) {
-                        stopWithMessage("Macro selesai: $completedLoops loop")
+                        stopWithMessage("Macro selesai: $completedLoops loop", "loop_limit_reached")
                         return@performAction
                     }
                 }
@@ -654,16 +705,16 @@ class ClickOverlayController(
             },
             onCancelled = {
                 if (runState == RunState.RUNNING && generation == runGeneration) {
-                    stopWithMessage("Gesture dibatalkan oleh sistem")
+                    stopWithMessage("Gesture dibatalkan oleh sistem", "gesture_cancelled")
                 }
             }
         )
 
-        if (!accepted) stopWithMessage("Sistem menolak gesture. Macro dihentikan.")
+        if (!accepted) stopWithMessage("Sistem menolak gesture. Macro dihentikan.", "gesture_rejected")
     }
 
-    private fun stopWithMessage(message: String) {
-        stopClicking()
+    private fun stopWithMessage(message: String, reason: String = "runtime_error") {
+        stopClicking(reason)
         Toast.makeText(service, message, Toast.LENGTH_SHORT).show()
     }
 
@@ -1415,7 +1466,14 @@ class ClickOverlayController(
         return runCatching {
             windowManager.removeViewImmediate(view)
             true
-        }.getOrElse { !view.isAttachedToWindow }
+        }.getOrElse { error ->
+            DiagnosticLog.record(
+                service,
+                "overlay_remove_failed",
+                mapOf("view" to view.javaClass.simpleName, "error" to error.javaClass.simpleName)
+            )
+            !view.isAttachedToWindow
+        }
     }
 
     private fun dp(value: Float): Int = (value * service.resources.displayMetrics.density).roundToInt()

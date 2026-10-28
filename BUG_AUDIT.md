@@ -26,6 +26,8 @@ Audit ini berlaku untuk source v0.6.4 pada branch perbaikan. APK stabil v0.6.3 d
 - Cleanup overlay mencoba removeViewImmediate untuk view yang sudah maupun belum attached.
 - Kegagalan drag tidak lagi menyimpan posisi yang tidak pernah berhasil ditampilkan.
 - Delay/durasi dikuantisasi ke presisi 100 ms agar tampilan dan nilai eksekusi konsisten.
+- Log diagnostik lokal yang dibatasi ukurannya mencatat lifecycle macro, target package, System UI, screen off, hasil gesture, Quick Settings, dan kegagalan overlay.
+- Log dapat dilihat dan diekspor tanpa izin penyimpanan umum; log tidak mengklaim dapat membaca crash internal aplikasi lain.
 
 ## Verifikasi source
 
