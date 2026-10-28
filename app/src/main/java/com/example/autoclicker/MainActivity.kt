@@ -26,7 +26,11 @@ import com.example.autoclicker.accessibility.AutoClickAccessibilityService
 import com.example.autoclicker.data.ClickPreferences
 import com.example.autoclicker.data.MacroProfile
 import com.example.autoclicker.data.MacroRepository
-import java.io.Reader
+import com.example.autoclicker.diagnostics.DiagnosticLog
+import java.io.ByteArrayOutputStream
+import java.io.InputStream
+import java.nio.ByteBuffer
+import java.nio.charset.CodingErrorAction
 
 class MainActivity : Activity() {
     private lateinit var repository: MacroRepository
@@ -47,10 +51,11 @@ class MainActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         repository = MacroRepository(this)
+        DiagnosticLog.record(this, "activity_created", mapOf("restored" to (savedInstanceState != null)))
         setContentView(createContentView())
         refreshProfiles(repository.getActiveProfile().name)
         savedInstanceState?.let(::restoreDraft)
-        if (repository.hasRecoveryBackup()) {
+        if (repository.consumeRecoveryNotice()) {
             Toast.makeText(
                 this,
                 "Data profil rusak diamankan sebagai backup; profil Recovery digunakan sementara.",
@@ -62,6 +67,15 @@ class MainActivity : Activity() {
     override fun onResume() {
         super.onResume()
         refreshServiceStatus()
+    }
+
+    override fun onDestroy() {
+        DiagnosticLog.record(
+            this,
+            "activity_destroyed",
+            mapOf("finishing" to isFinishing, "configurationChange" to isChangingConfigurations)
+        )
+        super.onDestroy()
     }
 
     override fun onSaveInstanceState(outState: Bundle) {
@@ -90,6 +104,7 @@ class MainActivity : Activity() {
         when (requestCode) {
             REQUEST_EXPORT -> exportProfiles(data)
             REQUEST_IMPORT -> importProfiles(data)
+            REQUEST_DIAGNOSTIC_EXPORT -> exportDiagnosticLog(data)
         }
     }
 
@@ -125,11 +140,23 @@ class MainActivity : Activity() {
         content.addView(createExecutionCard(), matchWrapParams(bottom = 14))
         content.addView(createEditorCard(), matchWrapParams(bottom = 14))
         content.addView(createDataCard(), matchWrapParams(bottom = 14))
+        content.addView(createDiagnosticsCard(), matchWrapParams(bottom = 14))
         content.addView(createUsageCard(), matchWrapParams())
 
         return ScrollView(this).apply {
             isFillViewport = true
+            clipToPadding = false
+            setOnApplyWindowInsetsListener { view, insets ->
+                view.setPadding(
+                    insets.systemWindowInsetLeft,
+                    insets.systemWindowInsetTop,
+                    insets.systemWindowInsetRight,
+                    insets.systemWindowInsetBottom
+                )
+                insets
+            }
             addView(content)
+            requestApplyInsets()
         }
     }
 
@@ -160,10 +187,16 @@ class MainActivity : Activity() {
                 override fun onItemSelected(parent: AdapterView<*>?, view: View?, position: Int, id: Long) {
                     if (isRefreshingProfiles || position !in 0 until profileAdapter.count) return
                     val newName = profileAdapter.getItem(position) ?: return
+                    if (newName == selectedProfileName) return
                     val previousName = selectedProfileName
                     if (previousName != null && previousName != newName) {
-                        if (saveProfileSettings(showConfirmation = false, refreshUi = false) == null) {
-                            refreshProfiles(previousName)
+                        val saved = saveProfileSettings(showConfirmation = false, refreshUi = false)
+                        if (saved == null) {
+                            restoreProfileSpinner(previousName)
+                            return
+                        }
+                        if (saved.name != previousName) {
+                            refreshProfiles(newName)
                             return
                         }
                     }
@@ -227,8 +260,23 @@ class MainActivity : Activity() {
         ))
     }
 
+    private fun createDiagnosticsCard() = verticalCard().apply {
+        addView(label("6  LOG DIAGNOSTIK"))
+        addView(
+            helpText(
+                "Mencatat alasan macro berhenti, perpindahan aplikasi, status layar, gesture, dan kegagalan overlay. " +
+                    "Log tidak dapat membaca crash internal aplikasi lain."
+            ),
+            matchWrapParams(top = 8, bottom = 8)
+        )
+        addView(buttonRow(
+            standardButton("Lihat Log") { showDiagnosticLog() },
+            standardButton("Export Log") { openDiagnosticExportPicker() }
+        ))
+    }
+
     private fun createUsageCard() = TextView(this).apply {
-        text = "Panduan singkat\n• + / −: tambah atau hapus titik.\n• ↑ / ↓: ubah urutan.\n• Ketuk label delay: atur jeda.\n• Ketuk jenis aksi: Tap → Tahan → Geser.\n• Ketuk durasi atau ×N: input langsung.\n• Marker E adalah tujuan swipe.\n• ▶ mulai, ■ atau STOP menghentikan."
+        text = "Panduan singkat\n• + / −: tambah atau hapus titik.\n• ↑ / ↓: ubah urutan.\n• Ketuk label delay: atur jeda.\n• Ketuk jenis aksi: Tap → Tahan → Geser.\n• Ketuk durasi atau ×N: input langsung.\n• Marker E adalah tujuan swipe.\n• ▶ mulai, ■ pada header menghentikan."
         textSize = 14f
         setTextColor(Color.rgb(51, 65, 85))
         setLineSpacing(0f, 1.18f)
@@ -250,6 +298,15 @@ class MainActivity : Activity() {
         repository.setActiveProfile(profiles[index].name)
         isRefreshingProfiles = false
         loadProfileFields()
+    }
+
+    private fun restoreProfileSpinner(profileName: String) {
+        val index = (0 until profileAdapter.count)
+            .firstOrNull { profileAdapter.getItem(it) == profileName }
+            ?: return
+        isRefreshingProfiles = true
+        profileSpinner.setSelection(index, false)
+        isRefreshingProfiles = false
     }
 
     private fun loadProfileFields() {
@@ -294,6 +351,11 @@ class MainActivity : Activity() {
             previousName
         )
         AutoClickAccessibilityService.instance?.notifyProfileSaved(previousName, saved)
+        DiagnosticLog.record(
+            this,
+            "profile_saved",
+            mapOf("renamed" to (previousName != saved.name), "pointCount" to saved.points.size)
+        )
         selectedProfileName = saved.name
         if (refreshUi) refreshProfiles(saved.name)
         if (showConfirmation) Toast.makeText(this, "Profil ${saved.name} disimpan", Toast.LENGTH_SHORT).show()
@@ -314,7 +376,9 @@ class MainActivity : Activity() {
             dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
                 if (input.text.toString().trim().isEmpty()) input.error = "Masukkan nama profil"
                 else {
+                    if (saveProfileSettings(showConfirmation = false, refreshUi = false) == null) return@setOnClickListener
                     val created = repository.createProfile(input.text.toString())
+                    DiagnosticLog.record(this, "profile_created")
                     refreshProfiles(created.name)
                     dialog.dismiss()
                 }
@@ -329,6 +393,7 @@ class MainActivity : Activity() {
             .setMessage("Profil $name beserta semua titiknya akan dihapus.")
             .setNegativeButton("Batal", null)
             .setPositiveButton("Hapus") { _, _ ->
+                DiagnosticLog.record(this, "profile_deleted")
                 AutoClickAccessibilityService.instance?.notifyProfileDeleted(name)
                 refreshProfiles(repository.deleteProfile(name).name)
             }.show()
@@ -346,8 +411,15 @@ class MainActivity : Activity() {
             Toast.makeText(this, "Layanan sedang disiapkan. Coba lagi sesaat.", Toast.LENGTH_SHORT).show()
             return
         }
-        service.showProfile(profile)
-        Toast.makeText(this, "Editor aktif di atas aplikasi lain", Toast.LENGTH_LONG).show()
+        DiagnosticLog.record(this, "editor_show_requested", mapOf("pointCount" to profile.points.size))
+        service.showProfile(profile) { shown ->
+            val message = if (shown) {
+                "Editor aktif di atas aplikasi lain"
+            } else {
+                "Editor gagal ditampilkan. Coba tutup overlay lama dan ulangi."
+            }
+            Toast.makeText(applicationContext, message, Toast.LENGTH_LONG).show()
+        }
     }
 
     private fun openExportPicker() {
@@ -368,36 +440,110 @@ class MainActivity : Activity() {
     private fun exportProfiles(data: Intent) {
         val uri = data.data ?: return
         runCatching {
-            contentResolver.openOutputStream(uri, "wt")?.bufferedWriter()?.use { it.write(repository.exportJson()) }
+            val json = repository.exportJson()
+            require(json.toByteArray(Charsets.UTF_8).size <= MAX_PROFILE_FILE_BYTES) {
+                "Data profil terlalu besar; maksimum file 2 MB"
+            }
+            contentResolver.openOutputStream(uri, "wt")?.bufferedWriter(Charsets.UTF_8)?.use { it.write(json) }
                 ?: error("Dokumen tidak dapat dibuka")
-        }.onSuccess { Toast.makeText(this, "Semua profil berhasil diekspor", Toast.LENGTH_LONG).show() }
-            .onFailure { Toast.makeText(this, "Export gagal: ${it.message}", Toast.LENGTH_LONG).show() }
+        }.onSuccess {
+            DiagnosticLog.record(this, "profiles_export_succeeded")
+            Toast.makeText(this, "Semua profil berhasil diekspor", Toast.LENGTH_LONG).show()
+        }.onFailure {
+            DiagnosticLog.record(this, "profiles_export_failed", mapOf("error" to it.javaClass.simpleName))
+            Toast.makeText(this, "Export gagal: ${it.message}", Toast.LENGTH_LONG).show()
+        }
     }
 
     private fun importProfiles(data: Intent) {
         val uri = data.data ?: return
         runCatching {
-            val json = contentResolver.openInputStream(uri)?.bufferedReader()?.use(::readBoundedText)
+            val json = contentResolver.openInputStream(uri)?.use(::readBoundedUtf8)
                 ?: error("Dokumen tidak dapat dibuka")
             repository.importJson(json)
         }.onSuccess {
+            DiagnosticLog.record(this, "profiles_import_succeeded", mapOf("profileCount" to it))
             refreshProfiles(repository.getActiveProfile().name)
             Toast.makeText(this, "$it profil berhasil diimpor", Toast.LENGTH_LONG).show()
-        }.onFailure { Toast.makeText(this, "Import gagal: ${it.message}", Toast.LENGTH_LONG).show() }
+        }.onFailure {
+            DiagnosticLog.record(this, "profiles_import_failed", mapOf("error" to it.javaClass.simpleName))
+            Toast.makeText(this, "Import gagal: ${it.message}", Toast.LENGTH_LONG).show()
+        }
     }
 
-    private fun readBoundedText(reader: Reader): String {
-        val result = StringBuilder()
-        val buffer = CharArray(8_192)
+    private fun readBoundedUtf8(input: InputStream): String {
+        val result = ByteArrayOutputStream()
+        val buffer = ByteArray(8_192)
+        var totalBytes = 0
         while (true) {
-            val count = reader.read(buffer)
+            val count = input.read(buffer)
             if (count < 0) break
-            if (result.length + count > MAX_IMPORT_CHARS) {
+            totalBytes += count
+            if (totalBytes > MAX_PROFILE_FILE_BYTES) {
                 error("File profil terlalu besar; maksimum 2 MB")
             }
-            result.append(buffer, 0, count)
+            result.write(buffer, 0, count)
         }
-        return result.toString()
+        return runCatching {
+            Charsets.UTF_8.newDecoder()
+                .onMalformedInput(CodingErrorAction.REPORT)
+                .onUnmappableCharacter(CodingErrorAction.REPORT)
+                .decode(ByteBuffer.wrap(result.toByteArray()))
+                .toString()
+        }.getOrElse { error("File profil bukan UTF-8 yang valid") }
+    }
+
+    private fun showDiagnosticLog() {
+        DiagnosticLog.record(this, "diagnostic_log_view_requested")
+        DiagnosticLog.snapshot(this) { result ->
+            if (isFinishing || isDestroyed) return@snapshot
+            result.onSuccess { snapshot ->
+                val textView = TextView(this).apply {
+                    text = snapshot
+                    textSize = 12f
+                    typeface = Typeface.MONOSPACE
+                    setTextColor(Color.rgb(15, 23, 42))
+                    setTextIsSelectable(true)
+                    setPadding(dp(12), dp(12), dp(12), dp(12))
+                }
+                val scrollView = ScrollView(this).apply { addView(textView) }
+                AlertDialog.Builder(this)
+                    .setTitle("Log Diagnostik")
+                    .setMessage("Log menjelaskan observasi Rich Clicker, bukan crash internal aplikasi lain.")
+                    .setView(scrollView)
+                    .setPositiveButton("Tutup", null)
+                    .show()
+            }.onFailure {
+                Toast.makeText(this, "Log gagal dibaca: ${it.javaClass.simpleName}", Toast.LENGTH_LONG).show()
+            }
+        }
+    }
+
+    private fun openDiagnosticExportPicker() {
+        DiagnosticLog.record(this, "diagnostic_export_picker_opened")
+        startActivityForResult(Intent(Intent.ACTION_CREATE_DOCUMENT).apply {
+            addCategory(Intent.CATEGORY_OPENABLE)
+            type = "text/plain"
+            putExtra(Intent.EXTRA_TITLE, "rich-clicker-diagnostics.txt")
+        }, REQUEST_DIAGNOSTIC_EXPORT)
+    }
+
+    private fun exportDiagnosticLog(data: Intent) {
+        val uri = data.data ?: return
+        DiagnosticLog.export(this, uri) { result ->
+            if (isFinishing || isDestroyed) return@export
+            result.onSuccess { byteCount ->
+                DiagnosticLog.record(this, "diagnostic_export_succeeded", mapOf("bytes" to byteCount))
+                Toast.makeText(this, "Log diagnostik berhasil diekspor", Toast.LENGTH_LONG).show()
+            }.onFailure {
+                DiagnosticLog.record(
+                    this,
+                    "diagnostic_export_failed",
+                    mapOf("error" to it.javaClass.simpleName)
+                )
+                Toast.makeText(this, "Export log gagal: ${it.javaClass.simpleName}", Toast.LENGTH_LONG).show()
+            }
+        }
     }
 
     private fun refreshServiceStatus() {
@@ -468,7 +614,8 @@ class MainActivity : Activity() {
     companion object {
         private const val REQUEST_EXPORT = 1001
         private const val REQUEST_IMPORT = 1002
-        private const val MAX_IMPORT_CHARS = 2_000_000
+        private const val REQUEST_DIAGNOSTIC_EXPORT = 1003
+        private const val MAX_PROFILE_FILE_BYTES = 2_000_000
         private const val STATE_PROFILE_NAME = "draft_profile_name"
         private const val STATE_DEFAULT_DELAY = "draft_default_delay"
         private const val STATE_LOOP_DELAY = "draft_loop_delay"

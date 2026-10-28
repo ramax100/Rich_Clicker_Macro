@@ -6,7 +6,10 @@ class ClickPreferences(context: Context) {
     private val preferences = context.getSharedPreferences(PREFERENCES_NAME, Context.MODE_PRIVATE)
 
     var defaultDelayMs: Long
-        get() = sanitizeDelay(preferences.getLong(KEY_INTERVAL_MS, DEFAULT_DELAY_MS))
+        get() {
+            val stored = preferences.all[KEY_INTERVAL_MS]
+            return sanitizeDelay((stored as? Number)?.toLong() ?: DEFAULT_DELAY_MS)
+        }
         set(value) {
             preferences.edit().putLong(KEY_INTERVAL_MS, sanitizeDelay(value)).apply()
         }
