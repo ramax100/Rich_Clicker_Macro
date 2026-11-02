@@ -3,7 +3,7 @@
   <h1>Rich Clicker Macro</h1>
   <p>Auto clicker dan editor macro multi-aksi untuk Android.</p>
 
-  [![Version](https://img.shields.io/badge/version-0.9.4-4f46e5)](https://github.com/ramax100/Rich_Clicker_Macro/releases/latest)
+  [![Version](https://img.shields.io/badge/version-0.9.5-4f46e5)](https://github.com/ramax100/Rich_Clicker_Macro/releases/latest)
   [![Android](https://img.shields.io/badge/Android-8.0%2B-3DDC84?logo=android)](#persyaratan)
   [![License](https://img.shields.io/badge/license-MIT-blue)](./LICENSE)
   [![Free](https://img.shields.io/badge/price-100%25%20gratis-brightgreen)](#gratis-dan-bebas-dimodifikasi)
@@ -15,9 +15,9 @@
 
 Aplikasi bekerja melalui Android Accessibility Service. Layanan hanya menjalankan gesture setelah pengguna mengaktifkannya secara manual dan menekan tombol mulai. Aplikasi tidak membaca struktur isi layar (`canRetrieveWindowContent=false`) dan tidak berjalan otomatis saat perangkat dinyalakan. Mode Macro Biasa tidak membaca layar sama sekali. Mode opsional Multi Smart Click mengambil gambar layar untuk membaca warna di titik yang dipilih pengguna; gambar tidak disimpan maupun dikirim. Pada modifikasi stabilitas lokal, metadata pergantian window dapat dipakai untuk menghentikan macro saat aplikasi tujuan berganti.
 
-## Modifikasi lokal 0.9.4
+## Modifikasi lokal 0.9.5
 
-- **Multi Smart Click (baru):** mode kedua yang klik berdasarkan kondisi warna layar, tanpa jeda per klik. Terpisah penuh dari Macro Biasa: model, penyimpanan, overlay, dan mesin eksekusi sendiri. Butuh Android 11+ dan izin baca layar. Panduan: [SMART_CLICK.md](./SMART_CLICK.md), audit: [AUDIT_0.9.4.md](./AUDIT_0.9.4.md).
+- **Multi Smart Click (baru):** mode kedua yang klik berdasarkan kondisi warna layar, tanpa jeda per klik. Terpisah penuh dari Macro Biasa: model, penyimpanan, overlay, dan mesin eksekusi sendiri. Butuh Android 11+ dan izin baca layar. Panduan: [SMART_CLICK.md](./SMART_CLICK.md), audit: [AUDIT_0.9.5.md](./AUDIT_0.9.5.md).
 - Toolbar ringkas: lebar maksimum 220 dp (sebelumnya 260 dp), tinggi baris dan tombol diperkecil. Pengaturan titik lanjutan berada di balik **⚙ Atur** agar tidak selalu menutupi game.
 - STOP tetap di dalam menu dan tetap tersedia di header saat macro berjalan, termasuk ketika toolbar diciutkan.
 - Audit ulang: jalur swipe yang melintasi toolbar kini ditolak, bukan hanya endpoint-nya; operasi buat/simpan/hapus profil dilindungi dari kegagalan penyimpanan.
@@ -39,7 +39,7 @@ Fork kerja ini menambahkan perbaikan stabilitas, **bukan anti-deteksi/anti-ban**
 - Log memakai satu worker latar dengan antrean terbatas; Path gesture digunakan ulang dan marker hanya digambar ulang ketika statusnya berubah.
 - Audit RAM dan cara membandingkan pemakaian selama sesi panjang: [MEMORY_AUDIT.md](./MEMORY_AUDIT.md).
 
-APK release lokal: `/home/user/Rich-Clicker-Macro-v0.9.4-com.richclickermacro-release.apk`. Package baru: `com.richclickermacro`. APK memakai signing key baru dan bukan rilis resmi upstream. Baca [STABILITY_NOTES.md](./STABILITY_NOTES.md) sebelum memasang.
+APK release lokal: `/home/user/Rich-Clicker-Macro-v0.9.5-com.richclickermacro-release.apk`. Package baru: `com.richclickermacro`. APK memakai signing key baru dan bukan rilis resmi upstream. Baca [STABILITY_NOTES.md](./STABILITY_NOTES.md) sebelum memasang.
 
 ## Gratis dan bebas dimodifikasi
 

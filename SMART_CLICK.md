@@ -1,4 +1,4 @@
-# Multi Smart Click (v0.9.4)
+# Multi Smart Click (v0.9.5)
 
 Fitur **terpisah** dari Macro Biasa. Macro Biasa tidak diubah.
 
@@ -38,7 +38,22 @@ dan **Titik ini** (untuk titik yang pernah dimatikan).
 Satu putaran = semua titik selesai berurutan. Setiap langkah tetap menunggu warna titiknya
 cocok, bukan menunggu hitungan detik — jadi kalau game loading lama, ia menunggu.
 
-### Kecepatan klik — berlaku untuk SEMUA titik
+### Akurasi: titik yang dipantau = titik yang diklik
+
+Tidak ada lagi pengaturan "pantau di sini, klik di sana". Setiap titik selalu mengklik
+tempat ia memantau.
+
+Pengaman yang aktif saat menjalankan:
+
+- Titik yang tertutup toolbar ditolak sebelum run dimulai.
+- Dua titik yang terlalu berdekatan ditolak, karena akan membaca area yang sama.
+- Kalau ukuran tangkapan layar berbeda lebih dari **1%** dari layar sebenarnya, smart click
+  berhenti dengan pesan — lebih baik berhenti daripada mengklik tempat yang salah.
+- Kalau layar berubah (rotasi/ukuran), run berhenti dan meminta titik diperiksa ulang.
+- Id titik selalu unik walau berkas impor berisi id kembar, supaya tidak ada dua titik yang
+  berbagi satu area pantau.
+
+## Kecepatan klik — berlaku untuk SEMUA titik
 
 Satu pilihan mengatur seluruh titik sekaligus. Jeda antar klik dihitung untuk seluruh run,
 bukan per titik — jadi menambah titik **tidak** membuat klik makin cepat.
@@ -97,11 +112,11 @@ posisinya benar sebelum sesi panjang.
   arti kalau urutannya jelas.
 - Kolom lama `separateTap`/`tapX`/`tapY` diabaikan; titik mengklik di posisi pantau.
 
-## Hasil pemeriksaan v0.9.4
+## Hasil pemeriksaan v0.9.5
 
 | Pemeriksaan | Hasil |
 |---|---|
-| Debug — smart | 156 test, 0 gagal |
+| Debug — smart | 166 test, 0 gagal |
 | Debug — home + MainActivity | lulus |
 | Debug — data, safety, diagnostics | lulus |
 | Debug — overlay, accessibility, import/export | lulus |
@@ -110,4 +125,4 @@ posisinya benar sebelum sesi panjang.
 
 **Belum diuji di perangkat nyata.** Gunakan **Tes Klik Titik Ini** sebelum sesi panjang.
 
-Rincian audit: [AUDIT_0.9.4.md](./AUDIT_0.9.4.md)
+Rincian audit: [AUDIT_0.9.5.md](./AUDIT_0.9.5.md)

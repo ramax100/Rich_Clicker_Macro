@@ -1,6 +1,23 @@
-# Catatan rilis 0.9.4 — com.richclickermacro
+# Catatan rilis 0.9.5 — com.richclickermacro
 
 Rilis lokal ini menindaklanjuti laporan **toolbar clicker tiba-tiba hilang** dan **game target force close setelah macro dimulai di Android 12**. Ini **bukan fitur anti-deteksi, anti-ban, atau bypass proteksi game**.
+
+## Tambahan 0.9.5 — akurasi klik dan cacat sisa
+
+**Dua titik bisa berbagi satu area pantau.** Id titik dibaca apa adanya dari berkas impor.
+Id kembar membuat dua titik runtuh menjadi satu area pantau: satu titik dinilai dari warna
+milik titik lain, lalu diklik di posisinya sendiri. Ini sumber "klik tidak sesuai titik"
+yang nyata. Sekarang id kembar diberi nomor baru saat impor, untuk smart maupun klasik.
+
+**Perubahan pengaturan hilang tanpa pesan.** `updateProfile()` mencari profil lewat nama;
+kalau profil sudah diganti nama atau diganti impor, hasilnya `null` dan seluruh suntingan
+dibuang diam-diam. Sekarang suntingan diterapkan ke profil aktif dan kejadiannya dicatat.
+
+**Toleransi ukuran tangkapan layar diperketat** dari 2% ke 1%. Selisih 2% berarti ±48
+piksel pada layar 2400 piksel — cukup untuk mengenai elemen yang salah. Sekarang smart
+click berhenti dengan pesan alih-alih mengklik di tempat yang tidak dipilih.
+
+Rincian: [AUDIT_0.9.5.md](./AUDIT_0.9.5.md).
 
 ## Tambahan 0.9.4 — dua bug kecepatan diperbaiki
 
@@ -15,7 +32,7 @@ jadi 3 titik mengklik ±3× lebih cepat dari yang dipilih. Sekarang ada satu ger
 jeda antar klik sama dengan angka yang dipilih, berapa pun jumlah titiknya.
 
 Pemilihan kecepatan disederhanakan jadi satu baris yang membuka daftar pilihan biasa.
-Rincian: [AUDIT_0.9.4.md](./AUDIT_0.9.4.md).
+Rincian lengkap ada di AUDIT_0.9.5.md.
 
 ## Tambahan 0.9.3 — fitur smart sesuai daftar pengguna
 

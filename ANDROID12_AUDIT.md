@@ -21,7 +21,7 @@ Ada beberapa jalur berisiko di sisi clicker yang sudah diperbaiki pada 0.7.2. Na
 | Dua mode bersamaan | Dua penyuntik gesture bisa bertumpuk | `requestExclusiveRun()` menegakkan satu mode aktif |
 | Memori | Bitmap layar penuh menambah tekanan memori | `HardwareBuffer.close()` + `Bitmap.recycle()` di `finally`; berhenti pada sinyal memori kritis |
 
-Mode Macro Biasa tidak membaca layar dan tidak terpengaruh perubahan ini. Rincian uji dan batasan ada di [AUDIT_0.9.4.md](./AUDIT_0.9.4.md).
+Mode Macro Biasa tidak membaca layar dan tidak terpengaruh perubahan ini. Rincian uji dan batasan ada di [AUDIT_0.9.5.md](./AUDIT_0.9.5.md).
 
 ## Pembaruan 0.7.4 — RAM dan crash tertunda
 
