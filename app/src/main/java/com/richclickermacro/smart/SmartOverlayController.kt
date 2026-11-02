@@ -365,7 +365,9 @@ class SmartOverlayController(
             val captureW = sampler.lastCaptureWidth
             val captureH = sampler.lastCaptureHeight
             if (captureW > 0 && captureH > 0 &&
-                !SmartGeometry.captureMatchesFrame(captureW, captureH, frame.width, frame.height)
+                !SmartGeometry.captureMatchesFrame(
+                    captureW, captureH, frame.width, frame.height, CAPTURE_FRAME_TOLERANCE
+                )
             ) {
                 MacroDiagnostics.record(
                     service, "smart_capture_frame_mismatch",
@@ -2023,6 +2025,14 @@ class SmartOverlayController(
 
         /** Roughly one pixel on a 1080p-class display; ignores rounding noise. */
         private const val POSITION_EPSILON = 0.0015f
+
+        /**
+         * The screenshot must describe the same rectangle as the display, otherwise a
+         * normalized position means one place in the image and another on the screen.
+         * 1% is roughly 24 px on a 2400 px display: small enough that a system-bar or
+         * crop difference is caught, large enough to ignore rounding.
+         */
+        private const val CAPTURE_FRAME_TOLERANCE = 0.01f
     }
 }
 

@@ -138,14 +138,19 @@ class MacroRepository(context: Context) {
 
     private fun parseProfile(json: JSONObject): MacroProfile? = runCatching {
         val pointsJson = json.getJSONArray(KEY_POINTS)
+        val usedIds = mutableSetOf<Long>()
         val points = buildList {
             for (index in 0 until pointsJson.length()) {
                 val point = pointsJson.getJSONObject(index)
+                // Duplicate ids would make two markers resolve to the same view, so the
+                // macro could act on the wrong marker. Imports can carry them.
+                var pointId = point.optLong(KEY_ID, System.nanoTime() + index)
+                while (!usedIds.add(pointId)) pointId++
                 val startX = normalized(point.optDouble(KEY_X, 0.5), 0.5f)
                 val startY = normalized(point.optDouble(KEY_Y, 0.3), 0.3f)
                 add(
                     MacroPoint(
-                        id = point.optLong(KEY_ID, System.nanoTime() + index),
+                        id = pointId,
                         normalizedX = startX,
                         normalizedY = startY,
                         delayMs = point.optLong(KEY_DELAY_MS, ClickPreferences.DEFAULT_DELAY_MS),

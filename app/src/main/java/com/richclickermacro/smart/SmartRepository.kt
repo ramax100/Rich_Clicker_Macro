@@ -1,6 +1,7 @@
 package com.richclickermacro.smart
 
 import android.content.Context
+import com.richclickermacro.diagnostics.MacroDiagnostics
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -10,6 +11,7 @@ import org.json.JSONObject
  * a malformed smart profile cannot damage existing timed macros (and vice versa).
  */
 class SmartRepository(context: Context) {
+    private val appContext = context.applicationContext ?: context
     private val preferences = context.getSharedPreferences(PREFERENCES_NAME, Context.MODE_PRIVATE)
 
     @Synchronized
@@ -93,8 +95,18 @@ class SmartRepository(context: Context) {
     @Synchronized
     fun updateProfile(profile: SmartProfile): SmartProfile? {
         val profiles = getProfiles().toMutableList()
-        val index = profiles.indexOfFirst { it.name == profile.name }
-        if (index < 0) return null
+        if (profiles.isEmpty()) return null
+        var index = profiles.indexOfFirst { it.name == profile.name }
+        if (index < 0) {
+            // The editor was opened for a profile that has since been renamed (or the
+            // stored list was replaced by an import). Falling back to the active profile
+            // keeps the user's edit instead of silently dropping every change, which is
+            // exactly what made settings look like they "did not stick".
+            val activeName = preferences.getString(KEY_ACTIVE, profiles.first().name) ?: profiles.first().name
+            index = profiles.indexOfFirst { it.name == activeName }
+            if (index < 0) index = 0
+            MacroDiagnostics.record(appContext, "smart_profile_relinked", "name=${profile.name}")
+        }
         val active = preferences.getString(KEY_ACTIVE, profiles.first().name) ?: profiles.first().name
         // Keep the stored name so an overlay edit can never rename or duplicate a profile.
         val merged = SmartLimits.sanitizeProfile(profile.copy(name = profiles[index].name))
@@ -169,16 +181,23 @@ class SmartRepository(context: Context) {
 
     private fun parseProfile(json: JSONObject): SmartProfile? = runCatching {
         val pointsJson = json.optJSONArray(KEY_POINTS) ?: JSONArray()
+        val usedIds = mutableSetOf<Long>()
         val points = buildList {
             for (index in 0 until pointsJson.length()) {
                 if (size >= SmartProfile.MAX_POINTS) break
                 val point = pointsJson.getJSONObject(index)
+                // Two points sharing an id would collapse into ONE sampled patch:
+                // the runner would decide point A from point B's colour and click the
+                // wrong place. Older exports and hand-edited files can contain that.
+                var pointId = point.optLong(KEY_ID, System.nanoTime() + index)
+                while (!usedIds.add(pointId)) pointId++
+                val uniqueId = pointId
                 val watchX = SmartLimits.unit(point.optDouble(KEY_WATCH_X, 0.5).toFloat(), 0.5f)
                 val watchY = SmartLimits.unit(point.optDouble(KEY_WATCH_Y, 0.5).toFloat(), 0.5f)
                 add(
                     SmartLimits.sanitizePoint(
                         SmartPoint(
-                            id = point.optLong(KEY_ID, System.nanoTime() + index),
+                            id = uniqueId,
                             label = point.optString(KEY_LABEL, "Titik ${index + 1}"),
                             watchX = watchX,
                             watchY = watchY,

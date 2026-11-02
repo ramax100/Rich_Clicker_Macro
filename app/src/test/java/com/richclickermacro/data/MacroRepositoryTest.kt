@@ -87,6 +87,32 @@ class MacroRepositoryTest {
     }
 
     @Test
+    fun importedPointsNeverShareAnId() {
+        // Two markers with the same id would resolve to the same overlay view, so the
+        // macro could act on the wrong marker. An import must repair that.
+        val json = """
+            {
+              "schemaVersion": 3,
+              "activeProfile": "Dobel",
+              "profiles": [
+                {
+                  "name": "Dobel",
+                  "points": [
+                    {"id": 9, "x": 0.2, "y": 0.2, "delayMs": 1000},
+                    {"id": 9, "x": 0.8, "y": 0.8, "delayMs": 1000}
+                  ]
+                }
+              ]
+            }
+        """.trimIndent()
+        assertEquals(1, repository.importJson(json))
+        val profile = repository.getProfile("Dobel")!!
+        val ids = profile.points.map { it.id }
+        assertEquals(2, ids.size)
+        assertEquals("ids must be unique after import", 2, ids.toSet().size)
+    }
+
+    @Test
     fun corruptProfilesAreBackedUpAndRecovered() {
         context.getSharedPreferences("macro_profiles", Context.MODE_PRIVATE)
             .edit().putString("profiles_json", "{corrupt").commit()

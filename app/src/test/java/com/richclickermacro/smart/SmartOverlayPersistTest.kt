@@ -4,7 +4,7 @@ import android.content.Context
 import androidx.test.core.app.ApplicationProvider
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
-import org.junit.Assert.assertNull
+import org.junit.Assert.assertNotEquals
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -179,10 +179,16 @@ class SmartOverlayPersistTest {
     }
 
     @Test
-    fun updatingAMissingProfileReturnsNullInsteadOfCreatingOne() {
-        val ghost = repository.getActiveProfile().copy(name = "TidakAda")
-        assertNull(repository.updateProfile(ghost))
-        assertEquals(1, repository.getProfiles().size)
+    fun updatingAMissingProfileReusesTheActiveOneAndCreatesNothing() {
+        // v0.9.5: returning null silently threw away every overlay edit when the stored
+        // profile had been renamed or replaced. The edit is now applied to the active
+        // profile instead — but a stale name must still never create a new profile.
+        val ghost = repository.getActiveProfile().copy(name = "TidakAda", loopLimit = 5)
+        val saved = repository.updateProfile(ghost)
+        assertNotNull("the edit must not be discarded", saved)
+        assertEquals("no profile may be created from a stale name", 1, repository.getProfiles().size)
+        assertEquals(5, repository.getProfiles().first().loopLimit)
+        assertNotEquals("TidakAda", repository.getProfiles().first().name)
     }
 
     @Test
