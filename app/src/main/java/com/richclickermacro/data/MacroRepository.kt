@@ -1,4 +1,4 @@
-package com.example.autoclicker.data
+package com.richclickermacro.data
 
 import android.content.Context
 import org.json.JSONArray
@@ -173,7 +173,8 @@ class MacroRepository(context: Context) {
                 loopDelayMs = json.optLong(KEY_LOOP_DELAY_MS, ClickPreferences.DEFAULT_DELAY_MS),
                 loopLimit = json.optInt(KEY_LOOP_LIMIT, 0),
                 countdownSeconds = json.optInt(KEY_COUNTDOWN, 3),
-                keepScreenOn = json.optBoolean(KEY_KEEP_SCREEN_ON, false)
+                keepScreenOn = json.optBoolean(KEY_KEEP_SCREEN_ON, false),
+                stopOnAppChange = json.optBoolean(KEY_STOP_ON_APP_CHANGE, true)
             )
         )
     }.getOrNull()
@@ -228,6 +229,7 @@ class MacroRepository(context: Context) {
                     put(KEY_LOOP_LIMIT, profile.loopLimit)
                     put(KEY_COUNTDOWN, profile.countdownSeconds)
                     put(KEY_KEEP_SCREEN_ON, profile.keepScreenOn)
+                        put(KEY_STOP_ON_APP_CHANGE, profile.stopOnAppChange)
                     put(KEY_POINTS, JSONArray().apply {
                         profile.points.forEach { point ->
                             put(JSONObject().apply {
@@ -314,7 +316,8 @@ class MacroRepository(context: Context) {
         private const val KEY_LOOP_LIMIT = "loopLimit"
         private const val KEY_COUNTDOWN = "countdownSeconds"
         private const val KEY_KEEP_SCREEN_ON = "keepScreenOn"
-        private const val SCHEMA_VERSION = 2
+        private const val KEY_STOP_ON_APP_CHANGE = "stopOnAppChange"
+        private const val SCHEMA_VERSION = 3
         private const val DEFAULT_PROFILE_NAME = "Default"
         private const val RECOVERY_PROFILE_NAME = "Recovery"
     }

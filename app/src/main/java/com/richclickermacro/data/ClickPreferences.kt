@@ -1,4 +1,4 @@
-package com.example.autoclicker.data
+package com.richclickermacro.data
 
 import android.content.Context
 

@@ -11,3 +11,4 @@ app/build/
 /*.apk
 signing/*.jks
 signing/KEY-PASSWORD.txt
+signing/keystore.properties

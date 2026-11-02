@@ -1,4 +1,4 @@
-package com.example.autoclicker.data
+package com.richclickermacro.data
 
 enum class PointActionType {
     TAP,
@@ -34,7 +34,8 @@ data class MacroProfile(
     val loopDelayMs: Long = ClickPreferences.DEFAULT_DELAY_MS,
     val loopLimit: Int = 0,
     val countdownSeconds: Int = 3,
-    val keepScreenOn: Boolean = false
+    val keepScreenOn: Boolean = false,
+    val stopOnAppChange: Boolean = true
 ) {
     companion object {
         const val MAX_NAME_LENGTH = 40
