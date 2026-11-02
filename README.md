@@ -128,7 +128,7 @@ layanan aksesibilitas. Izin tangkap layar hanya aktif setelah layanan dinyalakan
    titik**, dan pengaman.
 6. Tekan `▶`. Titik dijalankan berurutan dari titik 1 sampai terakhir, lalu diulang.
 
-Panduan lengkap: [SMART_CLICK.md](./SMART_CLICK.md).
+Panduan lengkap tiap menu ada di bagian [Semua fitur](#semua-fitur).
 
 ## Semua fitur
 
@@ -289,9 +289,9 @@ Ini bagian yang paling sering menimbulkan salah paham, jadi ditulis apa adanya.
   aplikasi streaming) tidak bisa ditangkap layarnya, sehingga mode smart tidak bisa dipakai.
 - **Laju tangkap layar dibatasi Android**, sekitar 333 ms per pengambilan. Mode smart tidak
   bisa lebih cepat dari itu, sekeras apa pun pengaturan kecepatannya.
-- **Penyebab aplikasi lain tertutup sendiri tidak bisa disimpulkan dari sini.** Pengukuran
-  memori clicker pada sesi panjang tidak menunjukkan kebocoran; lihat
-  [MEMORY_AUDIT.md](./MEMORY_AUDIT.md).
+- **Penyebab aplikasi lain tertutup sendiri tidak bisa disimpulkan dari sini.**
+  Pengukuran memori clicker pada sesi panjang tidak menunjukkan kebocoran, tetapi itu bukan
+  bukti bahwa fitur ini bebas dari pengaruh terhadap aplikasi lain.
 - **Verifikasi rilis** dilakukan lewat unit test, lint, dan pemeriksaan berkas APK — bukan
   pengujian di perangkat fisik. Karena itu tidak ada jaminan bebas cacat di semua perangkat.
 
@@ -321,12 +321,9 @@ tersebut sudah tercantum di `.gitignore`.
 
 ## Catatan perubahan
 
-- [AUDIT_0.9.5.md](./AUDIT_0.9.5.md) — audit menyeluruh terbaru: akurasi klik dan cacat sisa.
-- [STABILITY_NOTES.md](./STABILITY_NOTES.md) — riwayat perbaikan stabilitas per versi.
-- [SMART_CLICK.md](./SMART_CLICK.md) — panduan Multi Smart Click.
-- [MEMORY_AUDIT.md](./MEMORY_AUDIT.md) — audit pemakaian memori.
-- [ANDROID12_AUDIT.md](./ANDROID12_AUDIT.md) — catatan kompatibilitas Android 12.
-- [TOOLBAR_AUDIT.md](./TOOLBAR_AUDIT.md) — catatan ukuran dan tata letak toolbar.
+Riwayat perubahan tiap versi ada pada halaman
+[GitHub Releases](https://github.com/ramax100/Rich_Clicker_Macro/releases), termasuk
+ringkasan perbaikan pada setiap rilis.
 
 ## Modifikasi dan kontribusi
 

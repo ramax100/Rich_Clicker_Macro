@@ -1,0 +1,962 @@
+diff --git a/README.md b/README.md
+index c03370e..aa0a3c8 100644
+--- a/README.md
++++ b/README.md
+@@ -3,7 +3,7 @@
+   <h1>Rich Clicker Macro</h1>
+   <p>Auto clicker dan editor macro multi-aksi untuk Android.</p>
+ 
+-  [![Version](https://img.shields.io/badge/version-0.6.3-4f46e5)](https://github.com/ramax100/Rich_Clicker_Macro/releases/latest)
++  [![Version](https://img.shields.io/badge/version-0.6.4--stability-4f46e5)](https://github.com/ramax100/Rich_Clicker_Macro/releases/latest)
+   [![Android](https://img.shields.io/badge/Android-8.0%2B-3DDC84?logo=android)](#persyaratan)
+   [![License](https://img.shields.io/badge/license-MIT-blue)](./LICENSE)
+   [![Free](https://img.shields.io/badge/price-100%25%20gratis-brightgreen)](#gratis-dan-bebas-dimodifikasi)
+@@ -13,7 +13,20 @@
+ 
+ **Rich Clicker Macro** adalah aplikasi Android untuk membuat rangkaian tap, long press, dan swipe yang berjalan berurutan di atas aplikasi lain. Setiap macro dapat disimpan sebagai profil, diulang, diberi countdown, serta dikontrol dari overlay atau Quick Settings.
+ 
+-Aplikasi bekerja melalui Android Accessibility Service. Layanan hanya menjalankan gesture setelah pengguna mengaktifkannya secara manual dan menekan tombol mulai. Aplikasi tidak membaca isi layar (`canRetrieveWindowContent=false`) dan tidak berjalan otomatis saat perangkat dinyalakan.
++Aplikasi bekerja melalui Android Accessibility Service. Layanan hanya menjalankan gesture setelah pengguna mengaktifkannya secara manual dan menekan tombol mulai. Aplikasi tidak membaca isi layar (`canRetrieveWindowContent=false`) dan tidak berjalan otomatis saat perangkat dinyalakan. Pada modifikasi stabilitas lokal, metadata pergantian window dapat dipakai untuk menghentikan macro saat aplikasi tujuan berganti.
++
++## Modifikasi lokal 0.6.4-stability
++
++Fork kerja ini menambahkan perbaikan stabilitas, **bukan anti-deteksi/anti-ban**:
++
++- Validasi posisi marker sebelum gesture; macro berhenti jika koordinat tidak cocok dengan layar.
++- Perhitungan area layar mempertahankan origin `WindowMetrics` dan penyesuaian cutout.
++- Macro berhenti saat ukuran/posisi/rotasi layar berubah.
++- Opsi **Stop saat aplikasi tujuan berganti**, memakai metadata window tanpa membaca isi layar.
++- **Export Log Diagnostik** lokal untuk membantu menelusuri klik meleset, gesture ditolak, atau aplikasi tujuan berganti.
++- Schema profil v3 dengan `stopOnAppChange`; impor v1/v2 tetap didukung.
++
++APK uji lokal: `artifacts/Rich-Clicker-Macro-v0.6.4-stability-debug.apk`. APK ini memakai debug key dan bukan rilis resmi upstream. Baca [STABILITY_NOTES.md](./STABILITY_NOTES.md) sebelum memasang.
+ 
+ ## Gratis dan bebas dimodifikasi
+ 
+@@ -30,7 +43,7 @@ Anda boleh membuat fork atau versi modifikasi. Pertahankan pemberitahuan hak cip
+ 
+ Unduh APK terbaru melalui halaman [GitHub Releases](https://github.com/ramax100/Rich_Clicker_Macro/releases/latest).
+ 
+-Jika asset release tidak tampil, gunakan [download APK v0.6.3 langsung](https://github.com/ramax100/Rich_Clicker_Macro/raw/refs/heads/feature/rich-clicker-macro/release/Rich-Clicker-Macro-v0.6.3-release.apk).
++Jika asset release tidak tampil, gunakan [download APK v0.6.3 langsung](https://github.com/ramax100/Rich_Clicker_Macro/raw/refs/heads/feature/rich-clicker-macro/release/Rich-Clicker-Macro-v0.6.3-release.apk). Tautan ini adalah rilis upstream, bukan APK debug modifikasi lokal.
+ 
+ > APK dipasang melalui sideload dan dapat diperiksa oleh Google Play Protect. Jangan menonaktifkan proteksi perangkat. Pastikan APK berasal dari repository ini dan cocokkan checksum pada catatan release.
+ 
+@@ -75,8 +88,8 @@ Jika asset release tidak tampil, gunakan [download APK v0.6.3 langsung](https://
+ 
+ - Buat, pilih, ubah nama, dan hapus profil.
+ - Posisi, urutan, delay, jenis aksi, durasi, dan repeat tersimpan otomatis.
+-- Import/export semua profil menggunakan JSON schema v2.
+-- Profil schema v1 tetap kompatibel.
++- Import/export semua profil menggunakan JSON schema v3.
++- Profil schema v1/v2 tetap kompatibel.
+ - Nama hasil import yang sama diberi suffix agar profil lama tidak tertimpa.
+ - File import dibatasi 2 MB untuk menjaga stabilitas.
+ - Data profil rusak dicadangkan sebelum profil Recovery digunakan.
+@@ -86,6 +99,8 @@ Jika asset release tidak tampil, gunakan [download APK v0.6.3 langsung](https://
+ - Tombol mulai, berhenti, dan STOP darurat.
+ - Quick Settings Tile untuk mulai/berhenti macro yang sudah dimuat.
+ - Keep Screen On opsional selama macro berjalan.
++- Stop saat aplikasi tujuan berganti, serta saat ukuran/posisi/rotasi layar berubah.
++- Validasi koordinat marker sebelum gesture dan log diagnostik lokal yang bisa diekspor.
+ - Callback gesture mencegah urutan bertumpuk.
+ - Draft pengaturan tetap tersedia saat layar berotasi.
+ - Mendukung Android 8–15, foldable/windowed mode, dan berbagai ukuran layar melalui WindowMetrics/real display metrics.
+@@ -149,7 +164,7 @@ Persyaratan pengembangan:
+ git clone https://github.com/ramax100/Rich_Clicker_Macro.git
+ cd Rich_Clicker_Macro
+ git checkout feature/rich-clicker-macro
+-./gradlew assembleDebug
++./gradlew testDebugUnitTest lintDebug assembleDebug
+ ```
+ 
+ Jangan commit keystore, password signing, atau APK privat. Pola tersebut sudah dicantumkan dalam `.gitignore`.
+diff --git a/STABILITY_NOTES.md b/STABILITY_NOTES.md
+new file mode 100644
+index 0000000..68d165c
+--- /dev/null
++++ b/STABILITY_NOTES.md
+@@ -0,0 +1,47 @@
++# Catatan stabilitas 0.6.4-stability
++
++Modifikasi lokal ini berfokus pada dua keluhan: klik yang kadang tidak sesuai marker dan macro yang tetap berjalan setelah aplikasi tujuan tertutup/berpindah. Ini **bukan fitur anti-deteksi, anti-ban, atau bypass proteksi game**.
++
++## Perubahan
++
++- Validasi koordinat marker terhadap area layar absolut sebelum gesture. Jika selisihnya lebih dari 2 piksel dari posisi yang diharapkan, macro berhenti alih-alih mengirim klik ke lokasi yang salah.
++- Perhitungan layar API 30+ mempertahankan `left/top` dari `WindowMetrics.bounds`, bukan memaksanya menjadi `(0, 0)`.
++- Marker memakai `FLAG_LAYOUT_IN_SCREEN` dan mode cutout `SHORT_EDGES` pada Android 9+ agar area tepi lebih konsisten.
++- Macro berhenti ketika ukuran, posisi, atau rotasi layar berubah. Periksa marker sebelum memulai lagi.
++- Opsi profil **Stop saat aplikasi tujuan berganti** (aktif secara default pada profil baru/import lama). Menggunakan metadata pergantian window dari AccessibilityService, bukan isi layar.
++- Jika aplikasi tujuan belum terdeteksi saat guard aktif, macro tidak dimulai dan pengguna diminta membuka aplikasi tujuan setelah editor aktif.
++- Log diagnostik lokal terbatas: mulai/stop macro, pergantian aplikasi, penolakan gesture, dan kegagalan validasi marker. Tidak merekam isi layar, screenshot, atau koordinat gesture. Export log dilakukan manual dari aplikasi.
++- Schema profil naik ke v3 dengan field `stopOnAppChange`; format v1/v2 tetap dapat diimpor.
++- Path tap/long press dibuat sebagai kontur stasioner eksplisit, bukan hanya `moveTo`.
++
++## Cara menguji di perangkat
++
++1. Pasang APK debug uji, aktifkan Accessibility Service, lalu buka profil.
++2. Aktifkan **Stop saat aplikasi tujuan berganti**, simpan, dan tampilkan editor.
++3. Buka aplikasi/game tujuan, atur marker pada orientasi yang akan dipakai, lalu mulai.
++4. Uji tap, long press, dan swipe di tengah serta dekat tepi layar.
++5. Pindah ke aplikasi lain atau putar layar: macro harus berhenti dan meminta pemeriksaan marker.
++6. Jika klik masih meleset, jangan lanjutkan loop; export **Log Diagnostik** dan catat merek/tipe HP, versi Android, orientasi, mode layar penuh/split-screen, serta apakah ada cutout.
++7. Jika game force close, log macro hanya menunjukkan apakah macro berhenti/berganti aplikasi. Penyebab crash game perlu logcat perangkat atau laporan crash game tersebut.
++
++## Batasan
++
++- Guard aplikasi mengenali pergantian package window, bukan mendeteksi crash game secara langsung. Iklan/activity sistem dari package lain dapat menghentikan macro; itu perilaku aman yang disengaja.
++- Perubahan tampilan di dalam game tanpa perubahan ukuran layar tidak dapat dikenali tanpa membaca isi layar, yang sengaja tidak dilakukan.
++- Validasi marker dapat menghentikan macro pada OEM yang memberi offset overlay tidak biasa. Itu lebih aman daripada klik nyasar, tetapi tetap perlu uji perangkat nyata.
++- Belum diuji pada emulator/perangkat Android nyata di lingkungan kerja ini.
++- Tidak ada jaminan game tidak force close. Jika penyebabnya proteksi aplikasi, crash internal game, atau pembatasan OEM, perubahan stabilitas macro tidak bisa memastikan masalah itu hilang.
++
++## Artefak uji
++
++- APK debug: `artifacts/Rich-Clicker-Macro-v0.6.4-stability-debug.apk`
++- Patch sumber: `artifacts/rich-clicker-stability.patch`
++- APK ini memakai **debug key**, bukan signing key release upstream. Karena package name sama, Android umumnya menolak instal menimpa APK release resmi v0.6.3. Cadangkan profil lewat Export JSON, uninstall versi lama bila diperlukan, lalu pasang APK uji. Jangan membagikan atau memakai debug key untuk rilis produksi.
++- Export dari versi ini memakai schema v3. Aplikasi upstream v0.6.3 belum tentu bisa mengimpornya kembali; simpan backup schema v2 dari versi lama jika berencana kembali ke upstream.
++
++## Verifikasi yang dijalankan
++
++- `testDebugUnitTest`: 13 unit test keselamatan koordinat/klasifikasi window, semuanya lulus.
++- `assembleDebug`: berhasil menghasilkan APK debug.
++- `lintDebug`: berhasil, 0 error dan 34 warning (mayoritas teks hardcoded/RTL/aksesibilitas sentuh yang sudah ada atau terkait pola UI proyek).
++- Signature APK debug diverifikasi dengan `apksigner`.
+diff --git a/app/build.gradle.kts b/app/build.gradle.kts
+index 6c10f29..3d3399b 100644
+--- a/app/build.gradle.kts
++++ b/app/build.gradle.kts
+@@ -11,8 +11,8 @@ android {
+         applicationId = "com.example.autoclicker"
+         minSdk = 26
+         targetSdk = 35
+-        versionCode = 9
+-        versionName = "0.6.3"
++        versionCode = 10
++        versionName = "0.6.4-stability"
+     }
+ 
+     buildTypes {
+@@ -34,3 +34,7 @@ android {
+         jvmTarget = "17"
+     }
+ }
++
++dependencies {
++    testImplementation("junit:junit:4.13.2")
++}
+diff --git a/app/src/main/AndroidManifest.xml b/app/src/main/AndroidManifest.xml
+index 8cf6c6d..f052ed8 100644
+--- a/app/src/main/AndroidManifest.xml
++++ b/app/src/main/AndroidManifest.xml
+@@ -1,6 +1,5 @@
+ <?xml version="1.0" encoding="utf-8"?>
+-<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+-    package="com.example.autoclicker">
++<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+ 
+     <application
+         android:allowBackup="true"
+diff --git a/app/src/main/java/com/example/autoclicker/MainActivity.kt b/app/src/main/java/com/example/autoclicker/MainActivity.kt
+index fddbc27..fc8bb8a 100644
+--- a/app/src/main/java/com/example/autoclicker/MainActivity.kt
++++ b/app/src/main/java/com/example/autoclicker/MainActivity.kt
+@@ -26,6 +26,7 @@ import com.example.autoclicker.accessibility.AutoClickAccessibilityService
+ import com.example.autoclicker.data.ClickPreferences
+ import com.example.autoclicker.data.MacroProfile
+ import com.example.autoclicker.data.MacroRepository
++import com.example.autoclicker.diagnostics.MacroDiagnostics
+ import java.io.Reader
+ 
+ class MainActivity : Activity() {
+@@ -39,6 +40,7 @@ class MainActivity : Activity() {
+     private lateinit var loopLimitInput: EditText
+     private lateinit var countdownInput: EditText
+     private lateinit var keepScreenOnSwitch: Switch
++    private lateinit var stopOnAppChangeSwitch: Switch
+     private lateinit var showControlsButton: Button
+ 
+     private var selectedProfileName: String? = null
+@@ -72,6 +74,7 @@ class MainActivity : Activity() {
+         outState.putString(STATE_LOOP_LIMIT, loopLimitInput.text.toString())
+         outState.putString(STATE_COUNTDOWN, countdownInput.text.toString())
+         outState.putBoolean(STATE_KEEP_SCREEN_ON, keepScreenOnSwitch.isChecked)
++        outState.putBoolean(STATE_STOP_ON_APP_CHANGE, stopOnAppChangeSwitch.isChecked)
+     }
+ 
+     private fun restoreDraft(state: Bundle) {
+@@ -81,6 +84,7 @@ class MainActivity : Activity() {
+         loopLimitInput.setText(state.getString(STATE_LOOP_LIMIT, loopLimitInput.text.toString()))
+         countdownInput.setText(state.getString(STATE_COUNTDOWN, countdownInput.text.toString()))
+         keepScreenOnSwitch.isChecked = state.getBoolean(STATE_KEEP_SCREEN_ON, keepScreenOnSwitch.isChecked)
++        stopOnAppChangeSwitch.isChecked = state.getBoolean(STATE_STOP_ON_APP_CHANGE, stopOnAppChangeSwitch.isChecked)
+     }
+ 
+     @Deprecated("Menggunakan Activity Result lama agar proyek tetap tanpa dependensi tambahan")
+@@ -90,6 +94,7 @@ class MainActivity : Activity() {
+         when (requestCode) {
+             REQUEST_EXPORT -> exportProfiles(data)
+             REQUEST_IMPORT -> importProfiles(data)
++            REQUEST_EXPORT_LOG -> exportDiagnostics(data)
+         }
+     }
+ 
+@@ -204,6 +209,13 @@ class MainActivity : Activity() {
+             setPadding(0, dp(5), 0, dp(8))
+         }
+         addView(keepScreenOnSwitch)
++        stopOnAppChangeSwitch = Switch(this@MainActivity).apply {
++            text = "Stop saat aplikasi tujuan berganti"
++            textSize = 14f
++            setPadding(0, dp(5), 0, dp(4))
++        }
++        addView(stopOnAppChangeSwitch)
++        addView(helpText("Disarankan aktif. Macro juga berhenti jika ukuran, posisi, atau orientasi layar berubah; periksa marker sebelum memulai lagi."), matchWrapParams(bottom = 10))
+         addView(primaryButton("Simpan Pengaturan") {
+             saveProfileSettings(showConfirmation = true)
+         })
+@@ -225,6 +237,8 @@ class MainActivity : Activity() {
+             standardButton("Import JSON") { openImportPicker() },
+             standardButton("Export JSON") { openExportPicker() }
+         ))
++        addView(standardButton("Export Log Diagnostik") { openDiagnosticsExportPicker() }, matchWrapParams(top = 8))
++        addView(helpText("Log lokal berisi kejadian macro dan pergantian aplikasi, bukan isi layar. Bagikan hanya jika diperlukan untuk diagnosis."), matchWrapParams(top = 6))
+     }
+ 
+     private fun createUsageCard() = TextView(this).apply {
+@@ -260,6 +274,7 @@ class MainActivity : Activity() {
+         loopLimitInput.setText(profile.loopLimit.toString())
+         countdownInput.setText(profile.countdownSeconds.toString())
+         keepScreenOnSwitch.isChecked = profile.keepScreenOn
++        stopOnAppChangeSwitch.isChecked = profile.stopOnAppChange
+     }
+ 
+     private fun saveProfileSettings(
+@@ -289,7 +304,8 @@ class MainActivity : Activity() {
+                 loopDelayMs = loopDelay,
+                 loopLimit = loopLimit,
+                 countdownSeconds = countdown,
+-                keepScreenOn = keepScreenOnSwitch.isChecked
++                keepScreenOn = keepScreenOnSwitch.isChecked,
++                stopOnAppChange = stopOnAppChangeSwitch.isChecked
+             ),
+             previousName
+         )
+@@ -365,6 +381,22 @@ class MainActivity : Activity() {
+         }, REQUEST_IMPORT)
+     }
+ 
++    private fun openDiagnosticsExportPicker() {
++        startActivityForResult(Intent(Intent.ACTION_CREATE_DOCUMENT).apply {
++            addCategory(Intent.CATEGORY_OPENABLE); type = "text/plain"
++            putExtra(Intent.EXTRA_TITLE, "rich-clicker-diagnostics.txt")
++        }, REQUEST_EXPORT_LOG)
++    }
++
++    private fun exportDiagnostics(data: Intent) {
++        val uri = data.data ?: return
++        runCatching {
++            contentResolver.openOutputStream(uri, "wt")?.use { MacroDiagnostics.export(this, it) }
++                ?: error("Dokumen tidak dapat dibuka")
++        }.onSuccess { Toast.makeText(this, "Log diagnostik berhasil diekspor", Toast.LENGTH_LONG).show() }
++            .onFailure { Toast.makeText(this, "Export log gagal: ${it.message}", Toast.LENGTH_LONG).show() }
++    }
++
+     private fun exportProfiles(data: Intent) {
+         val uri = data.data ?: return
+         runCatching {
+@@ -468,6 +500,7 @@ class MainActivity : Activity() {
+     companion object {
+         private const val REQUEST_EXPORT = 1001
+         private const val REQUEST_IMPORT = 1002
++        private const val REQUEST_EXPORT_LOG = 1003
+         private const val MAX_IMPORT_CHARS = 2_000_000
+         private const val STATE_PROFILE_NAME = "draft_profile_name"
+         private const val STATE_DEFAULT_DELAY = "draft_default_delay"
+@@ -475,5 +508,6 @@ class MainActivity : Activity() {
+         private const val STATE_LOOP_LIMIT = "draft_loop_limit"
+         private const val STATE_COUNTDOWN = "draft_countdown"
+         private const val STATE_KEEP_SCREEN_ON = "draft_keep_screen_on"
++        private const val STATE_STOP_ON_APP_CHANGE = "draft_stop_on_app_change"
+     }
+ }
+diff --git a/app/src/main/java/com/example/autoclicker/accessibility/AutoClickAccessibilityService.kt b/app/src/main/java/com/example/autoclicker/accessibility/AutoClickAccessibilityService.kt
+index ad24717..b5ed013 100644
+--- a/app/src/main/java/com/example/autoclicker/accessibility/AutoClickAccessibilityService.kt
++++ b/app/src/main/java/com/example/autoclicker/accessibility/AutoClickAccessibilityService.kt
+@@ -15,6 +15,9 @@ import com.example.autoclicker.data.MacroProfile
+ import com.example.autoclicker.data.MacroRepository
+ import com.example.autoclicker.data.MacroPoint
+ import com.example.autoclicker.data.PointActionType
++import com.example.autoclicker.MainActivity
++import com.example.autoclicker.diagnostics.MacroDiagnostics
++import com.example.autoclicker.safety.ForegroundWindowClassifier
+ import com.example.autoclicker.overlay.ClickOverlayController
+ import com.example.autoclicker.quicksettings.MacroTileService
+ 
+@@ -24,18 +27,45 @@ class AutoClickAccessibilityService : AccessibilityService() {
+     private lateinit var overlayController: ClickOverlayController
+     private var isDestroyed = false
+     private var actionGeneration = 0L
++    @Volatile private var lastForegroundPackage: String? = null
+ 
+     override fun onServiceConnected() {
+         super.onServiceConnected()
+         isDestroyed = false
+         instance = this
+         repository = MacroRepository(this)
++        MacroDiagnostics.record(this, "service_connected")
+         overlayController = ClickOverlayController(this) { updatedProfile ->
+             repository.updateProfilePoints(updatedProfile.name, updatedProfile.points)
+         }
+     }
+ 
+-    override fun onAccessibilityEvent(event: AccessibilityEvent?) = Unit
++    override fun onAccessibilityEvent(event: AccessibilityEvent?) {
++        if (event?.eventType != AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) return
++        val packageName = event.packageName?.toString()
++        val className = event.className?.toString()
++        val inputMethodPackage = runCatching {
++            Settings.Secure.getString(contentResolver, Settings.Secure.DEFAULT_INPUT_METHOD)
++                ?.let { ComponentName.unflattenFromString(it)?.packageName }
++        }.getOrNull()
++        if (!ForegroundWindowClassifier.isApplicationWindow(
++                packageName, className, this.packageName,
++                ComponentName(this, MainActivity::class.java).className, inputMethodPackage
++            )
++        ) return
++
++        val observedPackage = packageName ?: return
++        val previousPackage = lastForegroundPackage
++        lastForegroundPackage = observedPackage
++        if (previousPackage != null && previousPackage != observedPackage) {
++            MacroDiagnostics.record(this, "app_window_changed", "from=$previousPackage to=$observedPackage")
++            if (::overlayController.isInitialized) {
++                overlayController.onApplicationWindowChanged(observedPackage)
++            }
++        }
++    }
++
++    fun foregroundPackage(): String? = lastForegroundPackage
+ 
+     override fun onInterrupt() {
+         if (::overlayController.isInitialized) overlayController.stopClicking()
+@@ -48,6 +78,8 @@ class AutoClickAccessibilityService : AccessibilityService() {
+ 
+     override fun onDestroy() {
+         isDestroyed = true
++        lastForegroundPackage = null
++        MacroDiagnostics.record(this, "service_destroyed")
+         mainHandler.removeCallbacksAndMessages(null)
+         if (::overlayController.isInitialized) overlayController.destroy()
+         if (instance === this) instance = null
+@@ -145,6 +177,9 @@ class AutoClickAccessibilityService : AccessibilityService() {
+                         startX + (endX - startX) * endFraction,
+                         startY + (endY - startY) * endFraction
+                     )
++                } else {
++                    // An explicit stationary contour avoids an empty moveTo-only path.
++                    lineTo(fromX, fromY)
+                 }
+             }
+             val hasMore = index + 1 < segmentCount
+diff --git a/app/src/main/java/com/example/autoclicker/data/MacroModels.kt b/app/src/main/java/com/example/autoclicker/data/MacroModels.kt
+index a099a6b..b2f317c 100644
+--- a/app/src/main/java/com/example/autoclicker/data/MacroModels.kt
++++ b/app/src/main/java/com/example/autoclicker/data/MacroModels.kt
+@@ -34,7 +34,8 @@ data class MacroProfile(
+     val loopDelayMs: Long = ClickPreferences.DEFAULT_DELAY_MS,
+     val loopLimit: Int = 0,
+     val countdownSeconds: Int = 3,
+-    val keepScreenOn: Boolean = false
++    val keepScreenOn: Boolean = false,
++    val stopOnAppChange: Boolean = true
+ ) {
+     companion object {
+         const val MAX_NAME_LENGTH = 40
+diff --git a/app/src/main/java/com/example/autoclicker/data/MacroRepository.kt b/app/src/main/java/com/example/autoclicker/data/MacroRepository.kt
+index 8a1318d..8998581 100644
+--- a/app/src/main/java/com/example/autoclicker/data/MacroRepository.kt
++++ b/app/src/main/java/com/example/autoclicker/data/MacroRepository.kt
+@@ -173,7 +173,8 @@ class MacroRepository(context: Context) {
+                 loopDelayMs = json.optLong(KEY_LOOP_DELAY_MS, ClickPreferences.DEFAULT_DELAY_MS),
+                 loopLimit = json.optInt(KEY_LOOP_LIMIT, 0),
+                 countdownSeconds = json.optInt(KEY_COUNTDOWN, 3),
+-                keepScreenOn = json.optBoolean(KEY_KEEP_SCREEN_ON, false)
++                keepScreenOn = json.optBoolean(KEY_KEEP_SCREEN_ON, false),
++                stopOnAppChange = json.optBoolean(KEY_STOP_ON_APP_CHANGE, true)
+             )
+         )
+     }.getOrNull()
+@@ -228,6 +229,7 @@ class MacroRepository(context: Context) {
+                     put(KEY_LOOP_LIMIT, profile.loopLimit)
+                     put(KEY_COUNTDOWN, profile.countdownSeconds)
+                     put(KEY_KEEP_SCREEN_ON, profile.keepScreenOn)
++                        put(KEY_STOP_ON_APP_CHANGE, profile.stopOnAppChange)
+                     put(KEY_POINTS, JSONArray().apply {
+                         profile.points.forEach { point ->
+                             put(JSONObject().apply {
+@@ -314,7 +316,8 @@ class MacroRepository(context: Context) {
+         private const val KEY_LOOP_LIMIT = "loopLimit"
+         private const val KEY_COUNTDOWN = "countdownSeconds"
+         private const val KEY_KEEP_SCREEN_ON = "keepScreenOn"
+-        private const val SCHEMA_VERSION = 2
++        private const val KEY_STOP_ON_APP_CHANGE = "stopOnAppChange"
++        private const val SCHEMA_VERSION = 3
+         private const val DEFAULT_PROFILE_NAME = "Default"
+         private const val RECOVERY_PROFILE_NAME = "Recovery"
+     }
+diff --git a/app/src/main/java/com/example/autoclicker/diagnostics/MacroDiagnostics.kt b/app/src/main/java/com/example/autoclicker/diagnostics/MacroDiagnostics.kt
+new file mode 100644
+index 0000000..1f57de4
+--- /dev/null
++++ b/app/src/main/java/com/example/autoclicker/diagnostics/MacroDiagnostics.kt
+@@ -0,0 +1,42 @@
++package com.example.autoclicker.diagnostics
++
++import android.content.Context
++import java.io.File
++import java.time.Instant
++
++/**
++ * Small, local-only operational log. It contains macro events and window package names,
++ * never screen contents, screenshots, or gesture coordinates. Export is user-initiated.
++ */
++object MacroDiagnostics {
++    private const val LOG_NAME = "macro-diagnostics.log"
++    private const val PREVIOUS_NAME = "macro-diagnostics.previous.log"
++    private const val MAX_FILE_BYTES = 256L * 1024L
++
++    @Synchronized
++    fun record(context: Context, event: String, details: String = "") {
++        runCatching {
++            val directory = context.filesDir
++            val current = File(directory, LOG_NAME)
++            if (current.length() >= MAX_FILE_BYTES) {
++                val previous = File(directory, PREVIOUS_NAME)
++                if (previous.exists()) previous.delete()
++                current.renameTo(previous)
++            }
++            val safeDetails = details.replace('\n', ' ').replace('\r', ' ').take(500)
++            File(directory, LOG_NAME).appendText("${Instant.now()} | $event | $safeDetails\n")
++        }
++    }
++
++    @Synchronized
++    fun export(context: Context, output: java.io.OutputStream) {
++        output.bufferedWriter().use { writer ->
++            writer.write("Rich Clicker Macro diagnostics (local events; no screen content)\n")
++            val previous = File(context.filesDir, PREVIOUS_NAME)
++            if (previous.exists()) writer.write(previous.readText())
++            val current = File(context.filesDir, LOG_NAME)
++            if (current.exists()) writer.write(current.readText())
++            if (!previous.exists() && !current.exists()) writer.write("Belum ada kejadian tercatat.\n")
++        }
++    }
++}
+diff --git a/app/src/main/java/com/example/autoclicker/overlay/ClickOverlayController.kt b/app/src/main/java/com/example/autoclicker/overlay/ClickOverlayController.kt
+index a5034f4..944b0cd 100644
+--- a/app/src/main/java/com/example/autoclicker/overlay/ClickOverlayController.kt
++++ b/app/src/main/java/com/example/autoclicker/overlay/ClickOverlayController.kt
+@@ -26,6 +26,9 @@ import com.example.autoclicker.data.ClickPreferences
+ import com.example.autoclicker.data.MacroPoint
+ import com.example.autoclicker.data.MacroProfile
+ import com.example.autoclicker.data.PointActionType
++import com.example.autoclicker.diagnostics.MacroDiagnostics
++import com.example.autoclicker.safety.MarkerCoordinates
++import com.example.autoclicker.safety.ScreenFrame
+ import kotlin.math.roundToInt
+ 
+ class ClickOverlayController(
+@@ -51,6 +54,8 @@ class ClickOverlayController(
+     private var runState = RunState.IDLE
+     private var isToolbarCollapsed = false
+     private var markersHidden = false
++    private var runScreenFrame: ScreenFrame? = null
++    private var expectedTargetPackage: String? = null
+ 
+     private lateinit var playButton: Button
+     private lateinit var stopButton: Button
+@@ -100,7 +105,10 @@ class ClickOverlayController(
+         Toast.makeText(service, "Profil ${profile.name} aktif di atas aplikasi lain", Toast.LENGTH_SHORT).show()
+     }
+ 
+-    fun stopClicking() {
++    fun stopClicking(reason: String = "stop_requested") {
++        if (runState != RunState.IDLE) MacroDiagnostics.record(service, "macro_stop", reason)
++        runScreenFrame = null
++        expectedTargetPackage = null
+         service.cancelActiveAction()
+         runGeneration++
+         runState = RunState.IDLE
+@@ -121,6 +129,9 @@ class ClickOverlayController(
+     }
+ 
+     fun onConfigurationChanged() {
++        if (runState != RunState.IDLE) {
++            stopWithMessage("Layar berubah. Periksa marker sebelum memulai lagi.")
++        }
+         targets.forEach { holder ->
+             applyNormalizedPosition(holder)
+             runCatching { windowManager.updateViewLayout(holder.view, holder.params) }
+@@ -174,6 +185,13 @@ class ClickOverlayController(
+         return true
+     }
+ 
++    fun onApplicationWindowChanged(packageName: String) {
++        val expected = expectedTargetPackage ?: return
++        if (runState != RunState.IDLE && currentProfile?.stopOnAppChange == true && packageName != expected) {
++            stopWithMessage("Aplikasi tujuan berganti. Macro dihentikan.")
++        }
++    }
++
+     fun isMacroActive(): Boolean = runState != RunState.IDLE
+ 
+     fun hasLoadedProfile(): Boolean = currentProfile != null && targets.isNotEmpty()
+@@ -418,6 +436,23 @@ class ClickOverlayController(
+         val profile = currentProfile ?: return
+         if (runState != RunState.IDLE || targets.isEmpty()) return
+ 
++        val targetPackage = if (profile.stopOnAppChange) {
++            service.foregroundPackage() ?: run {
++                Toast.makeText(
++                    service,
++                    "Aplikasi tujuan belum terdeteksi. Buka aplikasi tujuan setelah editor aktif, lalu coba lagi.",
++                    Toast.LENGTH_LONG
++                ).show()
++                return
++            }
++        } else null
++        expectedTargetPackage = targetPackage
++        runScreenFrame = screenFrame()
++        MacroDiagnostics.record(
++            service, "macro_start",
++            "points=${targets.size} appGuard=${profile.stopOnAppChange} countdown=${profile.countdownSeconds} loopLimit=${profile.loopLimit}"
++        )
++
+         runGeneration++
+         val generation = runGeneration
+         currentIndex = 0
+@@ -465,11 +500,18 @@ class ClickOverlayController(
+     private fun executeCurrentPoint(generation: Long) {
+         if (runState != RunState.RUNNING || generation != runGeneration || targets.isEmpty()) return
+ 
++        val frame = screenFrame()
++        if (runScreenFrame != frame) {
++            stopWithMessage("Ukuran atau orientasi layar berubah. Periksa marker sebelum memulai lagi.")
++            return
++        }
+         val point = targets[currentIndex]
+-        if (point.view.width <= 0 || point.view.height <= 0 ||
+-            (point.actionType == PointActionType.SWIPE && point.endView == null)
+-        ) {
+-            stopWithMessage("Posisi titik belum siap. Coba mulai kembali.")
++        val startAligned = isMarkerAligned(point.view, point.normalizedX, point.normalizedY, frame)
++        val endAligned = point.actionType != PointActionType.SWIPE ||
++            isMarkerAligned(point.endView, point.endNormalizedX, point.endNormalizedY, frame)
++        if (!startAligned || !endAligned) {
++            MacroDiagnostics.record(service, "marker_alignment_rejected", "point=${currentIndex + 1}")
++            stopWithMessage("Posisi marker tidak cocok dengan layar. Periksa titik, lalu mulai lagi.")
+             return
+         }
+ 
+@@ -531,16 +573,20 @@ class ClickOverlayController(
+             },
+             onCancelled = {
+                 if (runState == RunState.RUNNING && generation == runGeneration) {
++                    MacroDiagnostics.record(service, "gesture_cancelled", "point=${currentIndex + 1} action=${point.actionType}")
+                     stopWithMessage("Gesture dibatalkan oleh sistem")
+                 }
+             }
+         )
+ 
+-        if (!accepted) stopWithMessage("Sistem menolak gesture. Macro dihentikan.")
++        if (!accepted) {
++            MacroDiagnostics.record(service, "gesture_rejected", "point=${currentIndex + 1} action=${point.actionType}")
++            stopWithMessage("Sistem menolak gesture. Macro dihentikan.")
++        }
+     }
+ 
+     private fun stopWithMessage(message: String) {
+-        stopClicking()
++        stopClicking(message)
+         Toast.makeText(service, message, Toast.LENGTH_SHORT).show()
+     }
+ 
+@@ -1036,50 +1082,50 @@ class ClickOverlayController(
+         createMarkerLayoutParams(point.normalizedX, point.normalizedY)
+ 
+     private fun createMarkerLayoutParams(normalizedX: Float, normalizedY: Float): WindowManager.LayoutParams {
+-        val bounds = displayBounds()
+         val size = dp(TARGET_TOUCH_SIZE_DP)
+         return WindowManager.LayoutParams(
+             size,
+             size,
+             WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
+-            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
++            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
++                WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
+             PixelFormat.TRANSLUCENT
+         ).apply {
+             gravity = Gravity.TOP or Gravity.LEFT
+-            x = (normalizedX.coerceIn(0f, 1f) * bounds.width() - size / 2f).roundToInt()
+-                .coerceIn(-size / 2, bounds.width() - size / 2)
+-            y = (normalizedY.coerceIn(0f, 1f) * bounds.height() - size / 2f).roundToInt()
+-                .coerceIn(-size / 2, bounds.height() - size / 2)
++            val frame = screenFrame()
++            x = MarkerCoordinates.localLeft(normalizedX, frame, size)
++            y = MarkerCoordinates.localTop(normalizedY, frame, size)
++            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
++                layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
++            }
+         }
+     }
+ 
+     private fun applyNormalizedPosition(holder: TargetHolder) {
+-        val bounds = displayBounds()
+-        holder.params.x = (holder.normalizedX * bounds.width() - holder.params.width / 2f).roundToInt()
+-        holder.params.y = (holder.normalizedY * bounds.height() - holder.params.height / 2f).roundToInt()
++        val frame = screenFrame()
++        holder.params.x = MarkerCoordinates.localLeft(holder.normalizedX, frame, holder.params.width)
++        holder.params.y = MarkerCoordinates.localTop(holder.normalizedY, frame, holder.params.height)
+         clampTarget(holder)
+     }
+ 
+     private fun updateNormalizedPosition(holder: TargetHolder) {
+-        val bounds = displayBounds()
+-        if (bounds.width() <= 0 || bounds.height() <= 0) return
+-        holder.normalizedX = ((holder.params.x + holder.params.width / 2f) / bounds.width()).coerceIn(0f, 1f)
+-        holder.normalizedY = ((holder.params.y + holder.params.height / 2f) / bounds.height()).coerceIn(0f, 1f)
++        val frame = screenFrame()
++        holder.normalizedX = MarkerCoordinates.normalizedX(holder.params.x + holder.params.width / 2f, frame)
++        holder.normalizedY = MarkerCoordinates.normalizedY(holder.params.y + holder.params.height / 2f, frame)
+     }
+ 
+     private fun updateEndpointNormalizedPosition(holder: TargetHolder) {
+         val params = holder.endParams ?: return
+-        val bounds = displayBounds()
+-        if (bounds.width() <= 0 || bounds.height() <= 0) return
+-        holder.endNormalizedX = ((params.x + params.width / 2f) / bounds.width()).coerceIn(0f, 1f)
+-        holder.endNormalizedY = ((params.y + params.height / 2f) / bounds.height()).coerceIn(0f, 1f)
++        val frame = screenFrame()
++        holder.endNormalizedX = MarkerCoordinates.normalizedX(params.x + params.width / 2f, frame)
++        holder.endNormalizedY = MarkerCoordinates.normalizedY(params.y + params.height / 2f, frame)
+     }
+ 
+     private fun applyEndpointNormalizedPosition(holder: TargetHolder) {
+         val params = holder.endParams ?: return
+-        val bounds = displayBounds()
+-        params.x = (holder.endNormalizedX * bounds.width() - params.width / 2f).roundToInt()
+-        params.y = (holder.endNormalizedY * bounds.height() - params.height / 2f).roundToInt()
++        val frame = screenFrame()
++        params.x = MarkerCoordinates.localLeft(holder.endNormalizedX, frame, params.width)
++        params.y = MarkerCoordinates.localTop(holder.endNormalizedY, frame, params.height)
+         clampParams(params)
+     }
+ 
+@@ -1108,15 +1154,35 @@ class ClickOverlayController(
+         runCatching { windowManager.updateViewLayout(controls, params) }
+     }
+ 
+-    private fun displayBounds(): Rect {
++    private fun isMarkerAligned(view: View?, normalizedX: Float, normalizedY: Float, frame: ScreenFrame): Boolean {
++        if (view == null || !view.isAttachedToWindow || view.width <= 0 || view.height <= 0) return false
++        val location = IntArray(2)
++        view.getLocationOnScreen(location)
++        return MarkerCoordinates.isAligned(
++            frame, normalizedX, normalizedY, location[0], location[1], view.width, view.height
++        )
++    }
++
++    private fun screenFrame(): ScreenFrame {
++        @Suppress("DEPRECATION")
++        val rotation = windowManager.defaultDisplay.rotation
+         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+-            val current = windowManager.currentWindowMetrics.bounds
+-            return Rect(0, 0, current.width(), current.height())
++            val bounds = windowManager.currentWindowMetrics.bounds
++            return ScreenFrame(
++                bounds.left, bounds.top,
++                bounds.width().coerceAtLeast(1), bounds.height().coerceAtLeast(1), rotation
++            )
+         }
+         val metrics = DisplayMetrics()
+         @Suppress("DEPRECATION")
+         windowManager.defaultDisplay.getRealMetrics(metrics)
+-        return Rect(0, 0, metrics.widthPixels, metrics.heightPixels)
++        return ScreenFrame(0, 0, metrics.widthPixels.coerceAtLeast(1), metrics.heightPixels.coerceAtLeast(1), rotation)
++    }
++
++    /** Local layout/clamp bounds. Absolute screen validation uses screenFrame(). */
++    private fun displayBounds(): Rect {
++        val frame = screenFrame()
++        return Rect(0, 0, frame.width, frame.height)
+     }
+ 
+     private fun removeAllTargets(): Boolean {
+diff --git a/app/src/main/java/com/example/autoclicker/quicksettings/MacroTileService.kt b/app/src/main/java/com/example/autoclicker/quicksettings/MacroTileService.kt
+index 92a98e1..bd558dd 100644
+--- a/app/src/main/java/com/example/autoclicker/quicksettings/MacroTileService.kt
++++ b/app/src/main/java/com/example/autoclicker/quicksettings/MacroTileService.kt
+@@ -1,5 +1,6 @@
+ package com.example.autoclicker.quicksettings
+ 
++import android.annotation.SuppressLint
+ import android.app.PendingIntent
+ import android.content.ComponentName
+ import android.content.Context
+@@ -57,6 +58,8 @@ class MacroTileService : TileService() {
+         tile.updateTile()
+     }
+ 
++    // The legacy Intent overload is reached only below API 34; API 34+ uses PendingIntent.
++    @SuppressLint("StartActivityAndCollapseDeprecated")
+     private fun openMainActivity() {
+         val intent = Intent(this, MainActivity::class.java).apply {
+             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+diff --git a/app/src/main/java/com/example/autoclicker/safety/MacroSafety.kt b/app/src/main/java/com/example/autoclicker/safety/MacroSafety.kt
+new file mode 100644
+index 0000000..98606c9
+--- /dev/null
++++ b/app/src/main/java/com/example/autoclicker/safety/MacroSafety.kt
+@@ -0,0 +1,94 @@
++package com.example.autoclicker.safety
++
++import kotlin.math.abs
++import kotlin.math.roundToInt
++
++/**
++ * Display-local layout values and absolute screen coordinates are intentionally kept separate.
++ * On API 30+ WindowMetrics bounds do not necessarily start at (0, 0).
++ */
++data class ScreenFrame(
++    val left: Int,
++    val top: Int,
++    val width: Int,
++    val height: Int,
++    val rotation: Int
++) {
++    init {
++        require(width > 0 && height > 0) { "Display dimensions must be positive" }
++        require(rotation in 0..3) { "Invalid display rotation" }
++    }
++
++    fun centerX(normalizedX: Float): Float = left + normalizedX.coerceIn(0f, 1f) * width
++
++    fun centerY(normalizedY: Float): Float = top + normalizedY.coerceIn(0f, 1f) * height
++}
++
++object MarkerCoordinates {
++    /** Allows sub-pixel rounding, but rejects status-bar/cutout-sized offsets. */
++    const val ALIGNMENT_TOLERANCE_PX = 2f
++
++    fun localLeft(normalizedX: Float, frame: ScreenFrame, markerSize: Int): Int =
++        (normalizedX.coerceIn(0f, 1f) * frame.width - markerSize / 2f)
++            .roundToInt()
++            .coerceIn(-markerSize / 2, frame.width - markerSize / 2)
++
++    fun localTop(normalizedY: Float, frame: ScreenFrame, markerSize: Int): Int =
++        (normalizedY.coerceIn(0f, 1f) * frame.height - markerSize / 2f)
++            .roundToInt()
++            .coerceIn(-markerSize / 2, frame.height - markerSize / 2)
++
++    fun normalizedX(localCenterX: Float, frame: ScreenFrame): Float =
++        (localCenterX / frame.width).coerceIn(0f, 1f)
++
++    fun normalizedY(localCenterY: Float, frame: ScreenFrame): Float =
++        (localCenterY / frame.height).coerceIn(0f, 1f)
++
++    fun isAligned(
++        frame: ScreenFrame,
++        normalizedX: Float,
++        normalizedY: Float,
++        actualLeft: Int,
++        actualTop: Int,
++        markerWidth: Int,
++        markerHeight: Int
++    ): Boolean {
++        if (markerWidth <= 0 || markerHeight <= 0) return false
++        val actualCenterX = actualLeft + markerWidth / 2f
++        val actualCenterY = actualTop + markerHeight / 2f
++        return abs(actualCenterX - frame.centerX(normalizedX)) <= ALIGNMENT_TOLERANCE_PX &&
++            abs(actualCenterY - frame.centerY(normalizedY)) <= ALIGNMENT_TOLERANCE_PX
++    }
++}
++
++/**
++ * Uses only window-transition metadata already delivered by AccessibilityService.
++ * It never requests window content, screenshots, or the list of installed packages.
++ */
++object ForegroundWindowClassifier {
++    fun isApplicationWindow(
++        packageName: String?,
++        className: String?,
++        ownPackage: String,
++        mainActivityName: String,
++        inputMethodPackage: String?
++    ): Boolean {
++        if (packageName.isNullOrBlank() || className.isNullOrBlank()) return false
++
++        // Our overlay dialogs are not an application switch; opening our main activity is.
++        if (packageName == ownPackage) return className == mainActivityName
++
++        // Keep the last application while the notification shade or keyboard is transiently shown.
++        if (packageName == "android" || packageName == "com.android.systemui" ||
++            packageName.endsWith(".systemui") || packageName == inputMethodPackage
++        ) {
++            return false
++        }
++        if (className.startsWith("android.inputmethodservice.") ||
++            className.startsWith("android.widget.Toast")
++        ) {
++            return false
++        }
++        return true
++    }
++}
+diff --git a/app/src/main/res/values/strings.xml b/app/src/main/res/values/strings.xml
+index 53dac87..078099d 100644
+--- a/app/src/main/res/values/strings.xml
++++ b/app/src/main/res/values/strings.xml
+@@ -1,6 +1,6 @@
+ <resources>
+     <string name="app_name">Rich Clicker Macro</string>
+     <string name="accessibility_service_name">Layanan Rich Clicker Macro</string>
+-    <string name="accessibility_service_description">Menampilkan editor profil macro di atas aplikasi lain dan menjalankan aksi tap, tahan, atau geser hanya setelah pengguna menekan tombol mulai.</string>
++    <string name="accessibility_service_description">Menampilkan editor profil macro di atas aplikasi lain dan menjalankan aksi tap, tahan, atau geser hanya setelah pengguna menekan tombol mulai. Dapat memakai metadata pergantian window untuk menghentikan macro saat aplikasi tujuan berganti, tanpa membaca isi layar.</string>
+     <string name="quick_settings_tile_label">Rich Clicker</string>
+ </resources>
+diff --git a/app/src/main/res/xml/auto_click_accessibility_service.xml b/app/src/main/res/xml/auto_click_accessibility_service.xml
+index f4820f6..99c88c6 100644
+--- a/app/src/main/res/xml/auto_click_accessibility_service.xml
++++ b/app/src/main/res/xml/auto_click_accessibility_service.xml
+@@ -1,6 +1,6 @@
+ <?xml version="1.0" encoding="utf-8"?>
+ <accessibility-service xmlns:android="http://schemas.android.com/apk/res/android"
+-    android:accessibilityEventTypes="typeWindowsChanged"
++    android:accessibilityEventTypes="typeWindowStateChanged|typeWindowsChanged"
+     android:accessibilityFeedbackType="feedbackGeneric"
+     android:canPerformGestures="true"
+     android:canRetrieveWindowContent="false"
+diff --git a/app/src/test/java/com/example/autoclicker/safety/MacroSafetyTest.kt b/app/src/test/java/com/example/autoclicker/safety/MacroSafetyTest.kt
+new file mode 100644
+index 0000000..daab262
+--- /dev/null
++++ b/app/src/test/java/com/example/autoclicker/safety/MacroSafetyTest.kt
+@@ -0,0 +1,114 @@
++package com.example.autoclicker.safety
++
++import org.junit.Assert.assertEquals
++import org.junit.Assert.assertFalse
++import org.junit.Assert.assertTrue
++import org.junit.Test
++
++class MacroSafetyTest {
++    private val frame = ScreenFrame(left = 0, top = 0, width = 1080, height = 2400, rotation = 0)
++
++    @Test
++    fun markerCenterMatchesNormalizedScreenCoordinate() {
++        val size = 44
++        val left = MarkerCoordinates.localLeft(0.5f, frame, size)
++        val top = MarkerCoordinates.localTop(0.25f, frame, size)
++        assertTrue(MarkerCoordinates.isAligned(frame, 0.5f, 0.25f, left, top, size, size))
++    }
++
++    @Test
++    fun nonZeroDisplayOriginIsIncludedInExpectedCenter() {
++        val offsetFrame = frame.copy(left = 120, top = 64)
++        assertEquals(660f, offsetFrame.centerX(0.5f), 0.001f)
++        assertEquals(664f, offsetFrame.centerY(0.25f), 0.001f)
++        // A marker laid out as if the display started at zero must be rejected.
++        assertFalse(MarkerCoordinates.isAligned(offsetFrame, 0.5f, 0.25f, 518, 578, 44, 44))
++        assertTrue(MarkerCoordinates.isAligned(offsetFrame, 0.5f, 0.25f, 638, 642, 44, 44))
++    }
++
++    @Test
++    fun statusBarSizedDriftIsRejected() {
++        assertFalse(MarkerCoordinates.isAligned(frame, 0.5f, 0.25f, 518, 624, 44, 44))
++    }
++
++    @Test
++    fun roundingWithinTwoPixelsIsAccepted() {
++        assertTrue(MarkerCoordinates.isAligned(frame, 0.5f, 0.25f, 519, 579, 44, 44))
++    }
++
++    @Test
++    fun unmeasuredMarkerIsRejected() {
++        assertFalse(MarkerCoordinates.isAligned(frame, 0.5f, 0.25f, 518, 578, 0, 0))
++    }
++
++    @Test
++    fun edgeCoordinatesRemainReachable() {
++        assertEquals(-22, MarkerCoordinates.localLeft(0f, frame, 44))
++        assertEquals(1058, MarkerCoordinates.localLeft(1f, frame, 44))
++        assertEquals(-22, MarkerCoordinates.localTop(0f, frame, 44))
++        assertEquals(2378, MarkerCoordinates.localTop(1f, frame, 44))
++    }
++
++    @Test
++    fun normalizedRoundTripPreservesInteriorPoint() {
++        val x = MarkerCoordinates.normalizedX(540f, frame)
++        val y = MarkerCoordinates.normalizedY(600f, frame)
++        assertEquals(0.5f, x, 0.001f)
++        assertEquals(0.25f, y, 0.001f)
++    }
++
++    @Test
++    fun rotationAndBoundsChangesProduceDifferentSnapshots() {
++        assertFalse(frame == frame.copy(rotation = 1))
++        assertFalse(frame == frame.copy(width = 2400, height = 1080))
++        assertFalse(frame == frame.copy(left = 10))
++    }
++
++    @Test
++    fun gameWindowIsRecognized() {
++        assertTrue(
++            ForegroundWindowClassifier.isApplicationWindow(
++                "example.game", "example.game.GameActivity", OWN, MAIN, "example.keyboard"
++            )
++        )
++    }
++
++    @Test
++    fun ownOverlayDialogIsNotAnApplicationSwitch() {
++        assertFalse(
++            ForegroundWindowClassifier.isApplicationWindow(
++                OWN, "android.app.AlertDialog", OWN, MAIN, null
++            )
++        )
++        assertTrue(
++            ForegroundWindowClassifier.isApplicationWindow(OWN, MAIN, OWN, MAIN, null)
++        )
++    }
++
++    @Test
++    fun transientSystemWindowsDoNotReplaceTarget() {
++        assertFalse(ForegroundWindowClassifier.isApplicationWindow("com.android.systemui", "shade", OWN, MAIN, null))
++        assertFalse(ForegroundWindowClassifier.isApplicationWindow("example.keyboard", "IME", OWN, MAIN, "example.keyboard"))
++        assertFalse(ForegroundWindowClassifier.isApplicationWindow("android", "android.widget.Toast", OWN, MAIN, null))
++    }
++
++    @Test
++    fun launcherIsAnApplicationSwitch() {
++        assertTrue(
++            ForegroundWindowClassifier.isApplicationWindow(
++                "com.android.launcher3", "com.android.launcher3.Launcher", OWN, MAIN, null
++            )
++        )
++    }
++
++    @Test
++    fun missingMetadataIsIgnored() {
++        assertFalse(ForegroundWindowClassifier.isApplicationWindow(null, "Activity", OWN, MAIN, null))
++        assertFalse(ForegroundWindowClassifier.isApplicationWindow("example.game", null, OWN, MAIN, null))
++    }
++
++    private companion object {
++        const val OWN = "com.example.autoclicker"
++        const val MAIN = "com.example.autoclicker.MainActivity"
++    }
++}

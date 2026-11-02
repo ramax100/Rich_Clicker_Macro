@@ -1,0 +1,1 @@
+fa27d1e6949fca80c683c37cd1518659a3192fd689fb649f0f65b3f4831d692e  artifacts/Rich-Clicker-Macro-v0.6.4-stability-debug.apk
