@@ -9,187 +9,299 @@
   [![Free](https://img.shields.io/badge/price-100%25%20gratis-brightgreen)](#gratis-dan-bebas-dimodifikasi)
 </div>
 
+## Daftar isi
+
+- [Tentang aplikasi](#tentang-aplikasi)
+- [Dua mode, terpisah penuh](#dua-mode-terpisah-penuh)
+- [Download](#download)
+- [Persyaratan](#persyaratan)
+- [Instalasi](#instalasi)
+- [Cara penggunaan](#cara-penggunaan)
+- [Semua fitur](#semua-fitur)
+- [Kontrol overlay](#kontrol-overlay)
+- [Quick Settings Tile](#quick-settings-tile)
+- [Privasi dan izin](#privasi-dan-izin)
+- [Batasan yang perlu diketahui](#batasan-yang-perlu-diketahui)
+- [Build dari source](#build-dari-source)
+- [Modifikasi dan kontribusi](#modifikasi-dan-kontribusi)
+- [Komunitas](#komunitas)
+- [Lisensi](#lisensi)
+
 ## Tentang aplikasi
 
-**Rich Clicker Macro** adalah aplikasi Android untuk membuat rangkaian tap, long press, dan swipe yang berjalan berurutan di atas aplikasi lain. Setiap macro dapat disimpan sebagai profil, diulang, diberi countdown, serta dikontrol dari overlay atau Quick Settings.
+**Rich Clicker Macro** adalah aplikasi Android untuk menjalankan rangkaian tap, long press,
+dan swipe di atas aplikasi lain. Setiap rangkaian disimpan sebagai profil, bisa diulang,
+diberi hitungan mundur, dan dikendalikan dari overlay atau Quick Settings.
 
-Aplikasi bekerja melalui Android Accessibility Service. Layanan hanya menjalankan gesture setelah pengguna mengaktifkannya secara manual dan menekan tombol mulai. Aplikasi tidak membaca struktur isi layar (`canRetrieveWindowContent=false`) dan tidak berjalan otomatis saat perangkat dinyalakan. Mode Macro Biasa tidak membaca layar sama sekali. Mode opsional Multi Smart Click mengambil gambar layar untuk membaca warna di titik yang dipilih pengguna; gambar tidak disimpan maupun dikirim. Pada modifikasi stabilitas lokal, metadata pergantian window dapat dipakai untuk menghentikan macro saat aplikasi tujuan berganti.
+Aplikasi bekerja melalui Android Accessibility Service. Gesture hanya dikirim setelah
+pengguna mengaktifkan layanan secara manual dan menekan tombol mulai. Aplikasi **tidak
+membaca struktur isi layar** (`canRetrieveWindowContent=false`) dan tidak berjalan otomatis
+saat perangkat dinyalakan.
 
-## Modifikasi lokal 0.9.5
+Mode **Macro Biasa** sama sekali tidak melihat layar. Mode opsional **Multi Smart Click**
+mengambil gambar layar untuk membaca warna di titik yang dipilih pengguna; gambar hanya
+diperiksa di memori, tidak disimpan ke berkas dan tidak dikirim ke mana pun. Metadata
+pergantian jendela dipakai untuk menghentikan macro ketika aplikasi tujuan berganti.
 
-- **Multi Smart Click (baru):** mode kedua yang klik berdasarkan kondisi warna layar, tanpa jeda per klik. Terpisah penuh dari Macro Biasa: model, penyimpanan, overlay, dan mesin eksekusi sendiri. Butuh Android 11+ dan izin baca layar. Panduan: [SMART_CLICK.md](./SMART_CLICK.md), audit: [AUDIT_0.9.5.md](./AUDIT_0.9.5.md).
-- Toolbar ringkas: lebar maksimum 220 dp (sebelumnya 260 dp), tinggi baris dan tombol diperkecil. Pengaturan titik lanjutan berada di balik **⚙ Atur** agar tidak selalu menutupi game.
-- STOP tetap di dalam menu dan tetap tersedia di header saat macro berjalan, termasuk ketika toolbar diciutkan.
-- Audit ulang: jalur swipe yang melintasi toolbar kini ditolak, bukan hanya endpoint-nya; operasi buat/simpan/hapus profil dilindungi dari kegagalan penyimpanan.
+## Dua mode, terpisah penuh
 
-Fork kerja ini menambahkan perbaikan stabilitas, **bukan anti-deteksi/anti-ban**:
+Sejak v0.8.0 aplikasi punya dua mode. Keduanya punya model data, penyimpanan, overlay, dan
+mesin eksekusi sendiri, sehingga kerusakan pada satu mode tidak menjalar ke mode lain.
+Hanya **satu** mode boleh berjalan pada satu waktu.
 
-- Validasi posisi marker sebelum gesture; macro berhenti jika koordinat tidak cocok dengan layar.
-- Perhitungan area layar mempertahankan origin `WindowMetrics` dan penyesuaian cutout.
-- Macro berhenti saat ukuran/posisi/rotasi layar berubah.
-- Opsi **Stop saat aplikasi tujuan berganti**, memakai metadata window tanpa membaca isi layar.
-- **Export Log Diagnostik** lokal untuk membantu menelusuri klik meleset, gesture ditolak, atau aplikasi tujuan berganti.
-- Schema profil v3 dengan `stopOnAppChange`; impor v1/v2 tetap didukung.
-- Perbaikan force close Import/Export JSON di Android 12: pemilih file dilindungi, filter JSON diperluas, dan tersedia alternatif Export/Import lewat folder Download pada Android 10+.
-- Stabilitas overlay Android 12: toolbar dipantau saat disembunyikan/dilepas sistem, macro berhenti aman jika toolbar hilang, dan titik yang tertutup toolbar ditolak sebelum start.
-- Gesture lebih aman: koordinat divalidasi/di-clamp ke layar, error dispatch ditangkap, watchdog callback mencegah macro menggantung, dan opacity marker saat berjalan diturunkan untuk kompatibilitas sentuhan Android 12.
-- Dialog sistem Android 12 (izin, installer, chooser, keyboard) tidak lagi dianggap pergantian aplikasi target.
-- Log diagnostik mencatat crash proses clicker, service lifecycle, toolbar hilang, gesture ditolak/timeout, dan target package saat macro dimulai.
-- **Cek RAM Clicker** menampilkan PSS, heap Java/native, dan jumlah window overlay. Sampel memori otomatis setiap 60 detik hanya saat macro berjalan.
-- Log memakai satu worker latar dengan antrean terbatas; Path gesture digunakan ulang dan marker hanya digambar ulang ketika statusnya berubah.
-- Audit RAM dan cara membandingkan pemakaian selama sesi panjang: [MEMORY_AUDIT.md](./MEMORY_AUDIT.md).
-
-APK release lokal: `/home/user/Rich-Clicker-Macro-v0.9.5-com.richclickermacro-release.apk`. Package baru: `com.richclickermacro`. APK memakai signing key baru dan bukan rilis resmi upstream. Baca [STABILITY_NOTES.md](./STABILITY_NOTES.md) sebelum memasang.
-
-## Gratis dan bebas dimodifikasi
-
-Rich Clicker Macro sepenuhnya gratis:
-
-- Tanpa biaya pembelian.
-- Tanpa langganan atau fitur premium.
-- Tanpa iklan.
-- Source code tersedia dan bebas dipelajari, diubah, serta didistribusikan kembali berdasarkan [MIT License](./LICENSE).
-
-Anda boleh membuat fork atau versi modifikasi. Pertahankan pemberitahuan hak cipta dan lisensi saat mendistribusikan ulang source.
+| | Macro Biasa | Multi Smart Click |
+|---|---|---|
+| Kapan mengklik | Sesuai jeda waktu yang Anda atur | Sesuai kondisi warna di layar |
+| Titik | Tanpa batas dari aplikasi | Maksimal 10 titik |
+| Jenis aksi | Tap, tahan, geser (swipe) | Tap, tahan |
+| Android | 8.0+ (API 26) | **11+ (API 30)** |
+| Baca layar | Tidak pernah | Hanya warna di titik pilihan |
+| Cocok untuk | Urutan tetap yang sudah pasti | Layar yang berubah-ubah |
 
 ## Download
 
-Unduh APK terbaru melalui halaman [GitHub Releases](https://github.com/ramax100/Rich_Clicker_Macro/releases/latest).
+Unduh APK terbaru dari halaman **[GitHub Releases](https://github.com/ramax100/Rich_Clicker_Macro/releases/latest)**.
 
-Jika asset release tidak tampil, gunakan [download APK v0.6.3 langsung](https://github.com/ramax100/Rich_Clicker_Macro/raw/refs/heads/feature/rich-clicker-macro/release/Rich-Clicker-Macro-v0.6.3-release.apk). Tautan ini adalah rilis upstream, bukan APK debug modifikasi lokal.
+Setiap rilis menyertakan dua berkas:
 
-> APK dipasang melalui sideload dan dapat diperiksa oleh Google Play Protect. Jangan menonaktifkan proteksi perangkat. Pastikan APK berasal dari repository ini dan cocokkan checksum pada catatan release.
+- `Rich-Clicker-Macro-v0.9.5-com.richclickermacro-release.apk` — aplikasinya.
+- `...apk.sha256` — sidik jari untuk memeriksa unduhan tidak rusak.
+
+Cara memeriksa (opsional, tapi disarankan):
+
+```bash
+sha256sum Rich-Clicker-Macro-v0.9.5-com.richclickermacro-release.apk
+```
+
+Bandingkan hasilnya dengan isi berkas `.sha256`. Kalau berbeda, unduhan tidak utuh —
+jangan dipasang.
+
+> APK dipasang lewat sideload dan dapat diperiksa Google Play Protect. Jangan menonaktifkan
+> proteksi perangkat. Pastikan APK berasal dari halaman Releases repository ini.
 
 ## Persyaratan
 
-- Android 8.0 (API 26) atau lebih baru.
-- Accessibility Service harus diaktifkan secara manual.
-- Tidak memerlukan izin overlay umum atau izin penyimpanan umum.
+- **Android 8.0 (API 26)** atau lebih baru untuk Macro Biasa.
+- **Android 11 (API 30)** atau lebih baru untuk Multi Smart Click, karena mode ini memakai
+  API tangkap layar yang baru tersedia di sana.
+- Accessibility Service harus diaktifkan secara manual oleh Anda.
+- Tidak memerlukan izin overlay umum dan tidak memerlukan izin penyimpanan umum.
+
+## Instalasi
+
+1. Buka [GitHub Releases](https://github.com/ramax100/Rich_Clicker_Macro/releases/latest).
+2. Unduh berkas APK pada rilis terbaru.
+3. Izinkan instalasi dari sumber tersebut bila Android memintanya.
+4. Pasang, lalu buka **Rich Clicker Macro**.
+5. Tekan **Buka Pengaturan Aksesibilitas**, lalu aktifkan layanan **Rich Clicker Macro**.
+
+**Kalau sebelumnya memasang versi lain:** paket aplikasi ini `com.richclickermacro` dengan
+kunci penandatangan sendiri. Versi lama dengan paket berbeda (`com.example.autoclicker`)
+**tidak bisa ditimpa** — hapus dulu yang lama. Profil bisa dipindahkan lewat
+**Export/Import JSON**.
+
+**Untuk Multi Smart Click:** setelah memasang atau memperbarui, matikan lalu nyalakan ulang
+layanan aksesibilitas. Izin tangkap layar hanya aktif setelah layanan dinyalakan ulang.
+
+## Cara penggunaan
+
+### Macro Biasa
+
+1. Pilih atau buat profil macro.
+2. Atur jeda default, jeda antar-loop, batas loop, hitungan mundur, dan Keep Screen On.
+3. Tekan **Simpan Pengaturan**.
+4. Tekan **Tampilkan Editor di Atas Aplikasi**, lalu buka aplikasi tujuan.
+5. Tambah dan geser marker ke posisi yang diinginkan.
+6. Pilih jenis aksi, durasi, jumlah pengulangan, dan jeda setiap titik.
+7. Tekan `▶` untuk menjalankan.
+8. Tekan **STOP** di menu/toolbar atau Quick Settings Tile untuk berhenti.
+
+### Multi Smart Click
+
+1. Buka tab **MULTI SMART CLICK**, lalu **Buka Editor Smart Click**.
+2. Tekan **＋ Tambah Titik**, lalu ketuk bagian layar yang ingin diklik. Warna di titik itu
+   langsung dibaca dan disimpan.
+3. Untuk titik berikutnya, ulangi langkah 2.
+4. Melalui **⚙ → Atur Titik Ini** Anda bisa mengubah kepekaan warna, berapa kali diklik,
+   jenis klik (ketuk atau tahan), dan mengambil warna ulang.
+5. Melalui **⚙ → Loop & Kecepatan** Anda mengatur jumlah putaran, **kecepatan untuk semua
+   titik**, dan pengaman.
+6. Tekan `▶`. Titik dijalankan berurutan dari titik 1 sampai terakhir, lalu diulang.
+
+Panduan lengkap: [SMART_CLICK.md](./SMART_CLICK.md).
 
 ## Semua fitur
 
-### Macro multi-titik
+### Macro Biasa
 
-- Jumlah titik tidak dibatasi oleh aplikasi.
+- Jumlah titik tanpa batas dari aplikasi.
 - Urutan titik dapat diubah dengan tombol naik/turun.
-- Setelah titik terakhir, macro dapat kembali ke titik pertama.
-- Batas jumlah loop dapat diatur; nilai `0` berarti tanpa batas.
-- Jeda setiap titik dan jeda antar-loop dapat diatur terpisah.
-- Countdown 0–10 detik sebelum macro dimulai.
+- Setelah titik terakhir, macro kembali ke titik pertama.
+- Batas jumlah putaran dapat diatur; `0` berarti tanpa batas.
+- Jeda setiap titik dan jeda antar-putaran diatur terpisah (0,1 detik – 1 jam).
+- Hitungan mundur 0–10 detik sebelum macro dimulai.
 - Jumlah pengulangan setiap titik: 1–1.000 kali.
-
-### Jenis aksi
-
-- **Tap:** satu sentuhan singkat.
+- **Tap:** sentuhan singkat.
 - **Long press:** tahan 0,6–60 detik.
-- **Swipe:** geser dari marker awal menuju marker endpoint `E` selama 0,1–60 detik.
-- Gesture panjang dibagi menjadi segmen maksimal 500 ms agar penghentian lebih responsif.
+- **Swipe:** geser dari marker awal ke marker endpoint `E` selama 0,1–60 detik.
+- Gesture panjang dibagi menjadi segmen maksimal 500 ms supaya STOP lebih responsif.
 
 ### Overlay editor
 
-- Tetap tampil ketika berpindah ke aplikasi lain.
-- Marker kecil dengan pusat koordinat presisi.
-- Endpoint swipe berwarna biru dan berlabel `E`.
-- Marker serta endpoint dapat mencapai tepi layar.
+- Tetap tampil saat Anda berpindah aplikasi.
+- Marker kecil dengan pusat koordinat presisi; endpoint swipe berwarna biru berlabel `E`.
+- Marker dan endpoint dapat mencapai tepi layar.
+- Toolbar dapat digeser, diciutkan, dan dibuka kembali.
+- **STOP selalu di dalam menu**, dan tetap terlihat di header saat macro berjalan.
 - Tombol `◉/○` untuk menyembunyikan atau menampilkan marker.
-- Toolbar dapat dipindahkan, diciutkan, dan dibuka kembali. Mode default ringkas; **⚙ Atur** membuka pengaturan titik lanjutan.
-- Toolbar responsif untuk perangkat dengan layar sempit.
-- Posisi disimpan sebagai koordinat relatif agar menyesuaikan rotasi layar.
-- Tombol STOP berada di dalam menu/toolbar, termasuk STOP ringkas di header saat macro berjalan.
+- Posisi disimpan sebagai koordinat relatif sehingga menyesuaikan rotasi layar.
+
+### Multi Smart Click
+
+**Cara mengklik**
+
+- Klik dipicu kondisi warna layar, bukan jeda waktu. Tidak ada pengaturan jeda per klik.
+- Dua kondisi: **Cocok** (warna mendekati target) dan **Berubah** (warna menyimpang dari
+  acuan).
+- **Titik selalu mengklik tempat ia memantau.** Tidak ada lagi opsi "pantau di sini, klik di
+  sana" — opsi itu dihapus pada v0.9.2 karena menjadi sumber utama klik meleset.
+- **Berapa kali diklik:** satu titik bisa diklik beberapa kali setiap kali kondisinya cocok
+  (1–1.000).
+- **Urutan 1 → terakhir + Jumlah putaran:** titik dijalankan berurutan lalu diulang,
+  seperti macro biasa. `0` berarti terus berulang tanpa batas.
+
+**Kecepatan — satu pengaturan untuk semua titik**
+
+Pilih lewat **⚙ → Loop & Kecepatan → Kecepatan semua titik**:
+
+| Pilihan | Artinya |
+|---|---|
+| **Rekomendasi** (bawaan) | Paling aman: layar dibaca dua kali sebelum mengklik |
+| **Cepat** | Langsung klik pada bacaan pertama |
+| **Custom** | Isi sendiri tiga angka waktunya |
+
+Jarak antar klik berlaku untuk **seluruh proses**, bukan per titik. Menambah titik tidak
+membuat klik makin cepat.
+
+**Akurasi dan pengaman**
+
+- Titik yang tertutup toolbar ditolak sebelum dijalankan.
+- Dua titik yang terlalu berdekatan ditolak, karena akan membaca area yang sama.
+- Kalau ukuran tangkapan layar berbeda lebih dari **1%** dari layar sebenarnya, smart click
+  **berhenti dengan pesan** — lebih baik berhenti daripada mengklik di tempat yang salah.
+- Kalau layar berubah (rotasi atau ukuran), proses berhenti dan meminta titik diperiksa.
+- Id titik selalu dibuat unik, termasuk saat mengimpor berkas berisi id kembar.
+- Pengaman tambahan: berhenti setelah diam terlalu lama (bawaan 120 detik), batas total
+  klik, berhenti saat aplikasi tujuan berganti, dan berhenti saat Android melaporkan RAM
+  kritis.
+
+**Lain-lain**
+
+- Penandaan titik cukup dengan mengetuk layar; warna dibaca otomatis.
+- Marker disembunyikan otomatis saat membaca layar agar tidak ikut terbaca.
+- Profil, export/import, dan toolbar terpisah dari Macro Biasa.
 
 ### Profil dan data
 
 - Buat, pilih, ubah nama, dan hapus profil.
-- Posisi, urutan, delay, jenis aksi, durasi, dan repeat tersimpan otomatis.
-- Import/export semua profil menggunakan JSON schema v3.
-- Profil schema v1/v2 tetap kompatibel.
-- Nama hasil import yang sama diberi suffix agar profil lama tidak tertimpa.
-- File import dibatasi 2 MB untuk menjaga stabilitas.
-- Jika pemilih file tidak tersedia, aplikasi menampilkan pesan atau alternatif Download alih-alih force close.
-- Tombol **Export ke Download** dan **Import dari Download** tersedia sebagai alternatif Android 10+; import Download hanya membaca file yang dapat diakses aplikasi, terutama hasil export aplikasi ini.
-- Data profil rusak dicadangkan sebelum profil Recovery digunakan.
-
-### Multi Smart Click (opsional, Android 11+)
-
-- Klik dipicu kondisi warna layar, bukan jeda waktu; tidak ada pengaturan jeda per klik.
-- Dua kondisi: **Cocok** (warna mendekati target) dan **Berubah** (warna menyimpang dari acuan).
-- Posisi klik dapat dipisahkan dari posisi yang diawasi.
-- **Ulang N×**: satu titik diklik beberapa kali per kondisi yang cocok.
-- **Urutan 1→akhir + Putaran**: titik dijalankan berurutan lalu diulang, seperti macro biasa.
-- Penandaan titik cukup dengan mengetuk layar; warna dibaca otomatis.
-- Preset **⚡ Cepat / 🛡 Stabil** mengatur kecepatan tanpa mengisi angka.
-- Home memakai tab per mode sehingga hanya pengaturan yang relevan tampil.
-- Toleransi warna, jumlah konfirmasi, cooldown, batas aksi, dan batas waktu diam dapat diatur.
-- Profil, export/import, dan toolbar terpisah dari Macro Biasa.
-- Hanya satu mode berjalan pada satu waktu; memulai satu mode menghentikan yang lain.
-- Marker disembunyikan otomatis saat membaca layar agar tidak ikut terbaca.
+- Posisi, urutan, jeda, jenis aksi, durasi, dan pengulangan tersimpan otomatis.
+- Import/export semua profil memakai JSON schema v3; profil schema v1/v2 tetap terbaca.
+- Nama hasil impor yang sama diberi akhiran supaya profil lama tidak tertimpa.
+- Berkas impor dibatasi 2 juta karakter untuk menjaga stabilitas.
+- Data profil rusak dicadangkan lebih dulu sebelum profil pemulihan dipakai.
+- Bila pemilih file tidak tersedia, aplikasi menampilkan pesan atau alternatif lewat folder
+  Download, bukan berhenti mendadak.
 
 ### Kontrol dan stabilitas
 
 - Tombol mulai dan STOP di dalam menu/toolbar.
-- Quick Settings Tile untuk mulai/berhenti macro yang sudah dimuat.
+- Quick Settings Tile untuk memulai/menghentikan macro yang sudah dimuat.
 - Keep Screen On opsional selama macro berjalan.
-- Stop saat aplikasi tujuan berganti, serta saat ukuran/posisi/rotasi layar berubah.
-- Validasi koordinat marker sebelum gesture dan log diagnostik lokal yang bisa diekspor.
-- Callback gesture mencegah urutan bertumpuk.
-- Penghentian pencegahan saat Android lawas melaporkan tekanan memori kritis; bukan jaminan mencegah crash game.
-- Draft pengaturan tetap tersedia saat layar berotasi.
-- Mendukung Android 8–15, foldable/windowed mode, dan berbagai ukuran layar melalui WindowMetrics/real display metrics.
-
-## Cara instalasi
-
-1. Buka [GitHub Releases](https://github.com/ramax100/Rich_Clicker_Macro/releases/latest).
-2. Download file APK pada release terbaru.
-3. Izinkan instalasi dari sumber tersebut melalui pengaturan Android jika diminta.
-4. Instal lalu buka **Rich Clicker Macro**.
-5. Tekan **Buka Pengaturan Aksesibilitas** dan aktifkan layanan **Rich Clicker Macro**.
-
-Untuk memperbarui aplikasi, instal APK versi baru di atas versi lama dengan package dan signing key yang sama. Rilis lokal 0.7.4 memakai package baru `com.richclickermacro` dan signing key baru, sehingga tidak menimpa instalasi upstream `com.example.autoclicker`; export/import JSON dapat dipakai untuk memindahkan profil.
-
-## Cara penggunaan
-
-1. Pilih atau buat profil macro.
-2. Atur delay default, jeda antar-loop, batas loop, countdown, dan Keep Screen On.
-3. Tekan **Simpan Pengaturan**.
-4. Tekan **Tampilkan Editor di Atas Aplikasi**.
-5. Buka aplikasi tujuan.
-6. Tambahkan dan geser marker ke posisi yang diinginkan.
-7. Pilih jenis aksi, durasi, jumlah pengulangan, dan delay setiap titik.
-8. Tekan `▶` untuk menjalankan macro.
-9. Gunakan tombol merah **STOP** di menu/toolbar atau Quick Settings Tile untuk berhenti.
+- Berhenti otomatis saat aplikasi tujuan berganti, atau saat ukuran/posisi/rotasi layar
+  berubah.
+- Validasi koordinat marker sebelum gesture; macro berhenti bila koordinat tidak cocok.
+- Callback gesture dengan batas waktu, sehingga urutan tidak bertumpuk atau menggantung.
+- **Export Log Diagnostik** lokal untuk menelusuri klik meleset, gesture ditolak, atau
+  aplikasi tujuan berganti.
+- **Cek RAM Clicker** menampilkan PSS, heap Java/native, dan jumlah jendela overlay.
+- Mendukung Android 8–15, layar lipat, mode jendela, dan berbagai ukuran layar.
 
 ## Kontrol overlay
 
+### Toolbar Macro Biasa
+
 | Kontrol | Fungsi |
 |---|---|
-| `▶` | Memulai countdown dan macro |
+| `▶` | Memulai hitungan mundur dan macro |
 | `STOP` | Menghentikan macro dari menu/toolbar |
 | `+` | Menambah titik |
 | `−` | Menghapus titik terpilih |
 | `↑` / `↓` | Mengubah urutan titik |
-| `◉` / `○` | Hide/show semua marker |
+| `◉` / `○` | Menyembunyikan atau menampilkan marker |
 | `×` | Menutup editor overlay |
-| Label delay | Membuka input delay langsung |
+| Label jeda | Membuka input jeda langsung |
 | `Tap/Tahan/Geser` | Mengubah jenis aksi titik |
-| Label durasi | Mengatur durasi long press/swipe |
+| Label durasi | Mengatur durasi tahan atau geser |
 | `×N` | Mengatur jumlah aksi pada titik |
-| Header `MACRO` | Geser untuk memindahkan, ketuk untuk collapse/expand |
+| Header `MACRO` | Geser untuk memindahkan, ketuk untuk menciutkan |
+
+### Toolbar Multi Smart Click
+
+| Kontrol | Fungsi |
+|---|---|
+| `▶` | Memulai (didahului hitungan mundur bila diaktifkan) |
+| `STOP` | Menghentikan proses |
+| `＋ Tambah Titik` | Menandai titik baru dengan mengetuk layar |
+| `⚙` | Membuka menu: **Atur Titik Ini**, **Loop & Kecepatan**, **Tes Klik Titik Ini**, **Cara Pakai** |
 
 ## Quick Settings Tile
 
 1. Buka panel Quick Settings Android.
 2. Pilih menu edit tile.
 3. Tambahkan tile **Rich Clicker**.
-4. Muat profil melalui aplikasi terlebih dahulu.
-5. Ketuk tile untuk mulai atau berhenti. Jika belum ada profil dimuat, tile membuka aplikasi.
+4. Muat profil melalui aplikasi lebih dulu.
+5. Ketuk tile untuk mulai atau berhenti. Bila belum ada profil dimuat, tile membuka aplikasi.
+
+## Privasi dan izin
+
+| Yang dipakai | Untuk apa | Catatan |
+|---|---|---|
+| Accessibility Service | Mengirim gesture dan memantau jendela aktif | Diaktifkan manual oleh Anda |
+| Tangkap layar (API 30+) | Membaca warna di titik smart | Hanya di memori; tidak disimpan, tidak dikirim |
+| Metadata jendela | Berhenti saat aplikasi tujuan berganti | Nama paket saja, bukan isi layar |
+
+Aplikasi tidak meminta izin internet, tidak punya fitur tersembunyi, dan tidak menyertakan
+anti-deteksi, anti-ban, maupun cara melewati proteksi aplikasi lain.
+
+Log diagnostik ditulis lokal di penyimpanan aplikasi, berputar pada 256 KB, dan hanya
+dikirim keluar bila Anda sendiri menekan **Export Log Diagnostik**.
+
+## Batasan yang perlu diketahui
+
+Ini bagian yang paling sering menimbulkan salah paham, jadi ditulis apa adanya.
+
+- **Perilaku aplikasi lain tidak bisa dijamin.** Auto clicker mengirim sentuhan; apakah
+  sentuhan itu diterima, dan apa akibatnya, sepenuhnya ditentukan aplikasi tujuan.
+- **Multi Smart Click bergantung pada warna.** Kalau tampilan berubah (animasi, tema,
+  kecerahan, atau posisi tombol bergeser) di antara pembacaan dan klik, hasilnya bisa
+  meleset. Pilih titik pada bagian yang relatif diam.
+- **Aplikasi yang memakai `FLAG_SECURE`** (misalnya aplikasi perbankan, atau sebagian
+  aplikasi streaming) tidak bisa ditangkap layarnya, sehingga mode smart tidak bisa dipakai.
+- **Laju tangkap layar dibatasi Android**, sekitar 333 ms per pengambilan. Mode smart tidak
+  bisa lebih cepat dari itu, sekeras apa pun pengaturan kecepatannya.
+- **Penyebab aplikasi lain tertutup sendiri tidak bisa disimpulkan dari sini.** Pengukuran
+  memori clicker pada sesi panjang tidak menunjukkan kebocoran; lihat
+  [MEMORY_AUDIT.md](./MEMORY_AUDIT.md).
+- **Verifikasi rilis** dilakukan lewat unit test, lint, dan pemeriksaan berkas APK — bukan
+  pengujian di perangkat fisik. Karena itu tidak ada jaminan bebas cacat di semua perangkat.
 
 ## Build dari source
 
 Persyaratan pengembangan:
 
-- JDK 17.
-- Android SDK 35.
-- Gradle wrapper yang tersedia di repository.
+- JDK 17
+- Android SDK 35
+- Gradle wrapper yang tersedia di repository
 
 ```bash
 git clone https://github.com/ramax100/Rich_Clicker_Macro.git
@@ -198,7 +310,23 @@ git checkout feature/rich-clicker-macro
 ./gradlew testDebugUnitTest lintDebug assembleDebug
 ```
 
-Jangan commit keystore, password signing, atau APK privat. Pola tersebut sudah dicantumkan dalam `.gitignore`.
+Untuk APK rilis:
+
+```bash
+./gradlew assembleRelease
+```
+
+Jangan pernah meng-commit keystore, kata sandi penandatanganan, atau APK pribadi. Pola
+tersebut sudah tercantum di `.gitignore`.
+
+## Catatan perubahan
+
+- [AUDIT_0.9.5.md](./AUDIT_0.9.5.md) — audit menyeluruh terbaru: akurasi klik dan cacat sisa.
+- [STABILITY_NOTES.md](./STABILITY_NOTES.md) — riwayat perbaikan stabilitas per versi.
+- [SMART_CLICK.md](./SMART_CLICK.md) — panduan Multi Smart Click.
+- [MEMORY_AUDIT.md](./MEMORY_AUDIT.md) — audit pemakaian memori.
+- [ANDROID12_AUDIT.md](./ANDROID12_AUDIT.md) — catatan kompatibilitas Android 12.
+- [TOOLBAR_AUDIT.md](./TOOLBAR_AUDIT.md) — catatan ukuran dan tata letak toolbar.
 
 ## Modifikasi dan kontribusi
 
@@ -207,7 +335,22 @@ Jangan commit keystore, password signing, atau APK privat. Pola tersebut sudah d
 3. Lakukan perubahan dan pengujian.
 4. Kirim pull request dengan ringkasan perubahan.
 
-Penggunaan Accessibility Service harus tetap transparan dan memerlukan tindakan pengguna. Jangan menambahkan fungsi tersembunyi, pencurian data, anti-ban, atau mekanisme untuk melewati proteksi aplikasi/perangkat.
+Penggunaan Accessibility Service harus tetap transparan dan memerlukan tindakan pengguna.
+Jangan menambahkan fungsi tersembunyi, pencurian data, anti-ban, atau mekanisme untuk
+melewati proteksi aplikasi maupun perangkat.
+
+## Gratis dan bebas dimodifikasi
+
+Rich Clicker Macro sepenuhnya gratis:
+
+- Tanpa biaya pembelian.
+- Tanpa langganan atau fitur premium.
+- Tanpa iklan.
+- Source code tersedia dan bebas dipelajari, diubah, serta didistribusikan kembali
+  berdasarkan [MIT License](./LICENSE).
+
+Anda boleh membuat fork atau versi modifikasi. Pertahankan pemberitahuan hak cipta dan
+lisensi saat mendistribusikan ulang source.
 
 ## Komunitas
 
