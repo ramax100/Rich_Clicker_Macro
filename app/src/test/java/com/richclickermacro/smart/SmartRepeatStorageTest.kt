@@ -102,10 +102,11 @@ class SmartRepeatStorageTest {
     }
 
     @Test
-    fun currentSchemaIsWrittenAsThree() {
+    fun currentSchemaIsWrittenAsFour() {
         val repo = SmartRepository(context)
         val root = JSONObject(repo.exportJson())
-        assertEquals(3, root.getInt("schemaVersion"))
+        // v0.9.6 added the energy refill fields.
+        assertEquals(4, root.getInt("schemaVersion"))
     }
 
     @Test

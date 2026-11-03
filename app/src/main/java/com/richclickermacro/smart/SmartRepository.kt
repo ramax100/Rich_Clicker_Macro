@@ -212,7 +212,8 @@ class SmartRepository(context: Context) {
                             }.getOrDefault(SmartAction.TAP),
                             holdMs = point.optLong(KEY_HOLD_MS, SmartPoint.DEFAULT_HOLD_MS),
                             enabled = point.optBoolean(KEY_ENABLED, true),
-                            repeatCount = point.optInt(KEY_REPEAT, SmartPoint.DEFAULT_REPEAT_COUNT)
+                            repeatCount = point.optInt(KEY_REPEAT, SmartPoint.DEFAULT_REPEAT_COUNT),
+                            isGuard = point.optBoolean(KEY_IS_GUARD, false)
                         )
                     )
                 )
@@ -225,6 +226,29 @@ class SmartRepository(context: Context) {
                 scanIntervalMs = json.optLong(KEY_SCAN, SmartProfile.DEFAULT_SCAN_INTERVAL_MS),
                 cooldownMs = json.optLong(KEY_COOLDOWN, SmartProfile.DEFAULT_COOLDOWN_MS),
                 confirmSamples = json.optInt(KEY_CONFIRM, SmartProfile.DEFAULT_CONFIRM_SAMPLES),
+                energyMode = runCatching {
+                    EnergyMode.valueOf(json.optString(KEY_ENERGY_MODE, EnergyMode.OFF.name))
+                }.getOrDefault(EnergyMode.OFF),
+                energyGuardId = if (json.has(KEY_ENERGY_GUARD)) json.optLong(KEY_ENERGY_GUARD) else null,
+                recoverySteps = buildList {
+                    val stepsJson = json.optJSONArray(KEY_RECOVERY_STEPS) ?: JSONArray()
+                    for (index in 0 until stepsJson.length()) {
+                        if (size >= SmartProfile.MAX_RECOVERY_STEPS) break
+                        val step = stepsJson.optJSONObject(index) ?: continue
+                        add(
+                            SmartLimits.sanitizeRecoveryStep(
+                                SmartRecoveryStep(
+                                    x = SmartLimits.unit(step.optDouble(KEY_STEP_X, 0.5).toFloat(), 0.5f),
+                                    y = SmartLimits.unit(step.optDouble(KEY_STEP_Y, 0.5).toFloat(), 0.5f),
+                                    waitMs = step.optLong(KEY_STEP_WAIT, SmartRecoveryStep.DEFAULT_WAIT_MS)
+                                )
+                            )
+                        )
+                    }
+                },
+                recoveryAttempts = json.optInt(KEY_RECOVERY_ATTEMPTS, SmartProfile.DEFAULT_RECOVERY_ATTEMPTS),
+                recoveryBuyLimit = json.optInt(KEY_RECOVERY_BUY_LIMIT, SmartProfile.DEFAULT_RECOVERY_BUY_LIMIT),
+                recoveryRetryDelayMs = json.optLong(KEY_RECOVERY_RETRY, SmartProfile.DEFAULT_RECOVERY_RETRY_DELAY_MS),
                 idleTimeoutSec = json.optInt(KEY_IDLE, SmartProfile.DEFAULT_IDLE_TIMEOUT_SEC),
                 maxActions = json.optInt(KEY_MAX_ACTIONS, 0),
                 countdownSeconds = json.optInt(KEY_COUNTDOWN, 3),
@@ -268,6 +292,20 @@ class SmartRepository(context: Context) {
                     put(KEY_ORDER, profile.orderMode.name)
                     put(KEY_SPEED, profile.speedMode.name)
                     put(KEY_LOOP, profile.loopLimit)
+                    put(KEY_ENERGY_MODE, profile.energyMode.name)
+                    profile.energyGuardId?.let { put(KEY_ENERGY_GUARD, it) }
+                    put(KEY_RECOVERY_ATTEMPTS, profile.recoveryAttempts)
+                    put(KEY_RECOVERY_BUY_LIMIT, profile.recoveryBuyLimit)
+                    put(KEY_RECOVERY_RETRY, profile.recoveryRetryDelayMs)
+                    put(KEY_RECOVERY_STEPS, JSONArray().apply {
+                        profile.recoverySteps.forEach { step ->
+                            put(JSONObject().apply {
+                                put(KEY_STEP_X, step.x.toDouble())
+                                put(KEY_STEP_Y, step.y.toDouble())
+                                put(KEY_STEP_WAIT, step.waitMs)
+                            })
+                        }
+                    })
                     put(KEY_POINTS, JSONArray().apply {
                         profile.points.forEach { point ->
                             put(JSONObject().apply {
@@ -283,6 +321,7 @@ class SmartRepository(context: Context) {
                                 put(KEY_HOLD_MS, point.holdMs)
                                 put(KEY_ENABLED, point.enabled)
                                 put(KEY_REPEAT, point.repeatCount)
+                                if (point.isGuard) put(KEY_IS_GUARD, true)
                             })
                         }
                     })
@@ -307,7 +346,7 @@ class SmartRepository(context: Context) {
 
     companion object {
         const val KIND = "rich-clicker-smart"
-        const val SCHEMA_VERSION = 3
+        const val SCHEMA_VERSION = 4
 
         /** Schema 1 (v0.8.0) and 2 (v0.8.1-0.9.2) files stay importable. */
         const val MIN_READ_SCHEMA = 1
@@ -338,6 +377,16 @@ class SmartRepository(context: Context) {
         private const val KEY_REPEAT = "repeatCount"
         private const val KEY_ORDER = "orderMode"
         private const val KEY_SPEED = "speedMode"
+        private const val KEY_ENERGY_MODE = "energyMode"
+        private const val KEY_ENERGY_GUARD = "energyGuardId"
+        private const val KEY_RECOVERY_STEPS = "recoverySteps"
+        private const val KEY_RECOVERY_ATTEMPTS = "recoveryAttempts"
+        private const val KEY_RECOVERY_BUY_LIMIT = "recoveryBuyLimit"
+        private const val KEY_RECOVERY_RETRY = "recoveryRetryDelayMs"
+        private const val KEY_STEP_X = "x"
+        private const val KEY_STEP_Y = "y"
+        private const val KEY_STEP_WAIT = "waitMs"
+        private const val KEY_IS_GUARD = "isGuard"
         private const val KEY_LOOP = "loopLimit"
         private const val KEY_SCAN = "scanIntervalMs"
         private const val KEY_COOLDOWN = "cooldownMs"

@@ -3,7 +3,7 @@
   <h1>Rich Clicker Macro</h1>
   <p>Auto clicker dan editor macro multi-aksi untuk Android.</p>
 
-  [![Version](https://img.shields.io/badge/version-0.9.6-4f46e5)](https://github.com/ramax100/Rich_Clicker_Macro/releases/latest)
+  [![Version](https://img.shields.io/badge/version-0.9.7-4f46e5)](https://github.com/ramax100/Rich_Clicker_Macro/releases/latest)
   [![Android](https://img.shields.io/badge/Android-8.0%2B-3DDC84?logo=android)](#persyaratan)
   [![License](https://img.shields.io/badge/license-MIT-blue)](./LICENSE)
   [![Free](https://img.shields.io/badge/price-100%25%20gratis-brightgreen)](#gratis-dan-bebas-dimodifikasi)
@@ -17,6 +17,7 @@
 - [Persyaratan](#persyaratan)
 - [Instalasi](#instalasi)
 - [Cara penggunaan](#cara-penggunaan)
+- [Mengisi energi otomatis](#mengisi-energi-otomatis)
 - [Semua fitur](#semua-fitur)
 - [Kontrol overlay](#kontrol-overlay)
 - [Quick Settings Tile](#quick-settings-tile)
@@ -56,6 +57,7 @@ Hanya **satu** mode boleh berjalan pada satu waktu.
 | Jenis aksi | Tap, tahan, geser (swipe) | Tap, tahan |
 | Android | 8.0+ (API 26) | **11+ (API 30)** |
 | Baca layar | Tidak pernah | Hanya warna di titik pilihan |
+| Isi energi otomatis | Tidak tersedia | Tersedia (tunggu sendiri / beli) |
 | Cocok untuk | Urutan tetap yang sudah pasti | Layar yang berubah-ubah |
 
 ## Download
@@ -64,13 +66,13 @@ Unduh APK terbaru dari halaman **[GitHub Releases](https://github.com/ramax100/R
 
 Setiap rilis menyertakan dua berkas:
 
-- `Rich-Clicker-Macro-v0.9.6-com.richclickermacro-release.apk` — aplikasinya.
+- `Rich-Clicker-Macro-v0.9.7-com.richclickermacro-release.apk` — aplikasinya.
 - `...apk.sha256` — sidik jari untuk memeriksa unduhan tidak rusak.
 
 Cara memeriksa (opsional, tapi disarankan):
 
 ```bash
-sha256sum Rich-Clicker-Macro-v0.9.6-com.richclickermacro-release.apk
+sha256sum Rich-Clicker-Macro-v0.9.7-com.richclickermacro-release.apk
 ```
 
 Bandingkan hasilnya dengan isi berkas `.sha256`. Kalau berbeda, unduhan tidak utuh —
@@ -130,6 +132,59 @@ layanan aksesibilitas. Izin tangkap layar hanya aktif setelah layanan dinyalakan
 
 Panduan lengkap tiap menu ada di bagian [Semua fitur](#semua-fitur).
 
+## Mengisi energi otomatis
+
+Kalau di game ada energi yang habis setelah dipakai beberapa kali, urutan klik akan berhenti
+bekerja. Fitur ini membuat aplikasi **menyadari energi habis, mengisinya, lalu melanjutkan
+dari titik 1**.
+
+Cara kerjanya memakai satu **titik penjaga**:
+
+1. Satu titik ditandai sebagai penjaga. Titik ini **hanya dilihat, tidak diklik**, dan tidak
+   ikut urutan 1 → terakhir.
+2. Warna penjaga diambil saat energi **HABIS**. Jadi "cocok" berarti "energi habis".
+3. Setiap pembacaan layar ikut memeriksa titik penjaga.
+4. Kalau energi habis **dua kali berturut-turut** (supaya satu frame keliru tidak memicu
+   pembelian), urutan dijeda dan pengisian dijalankan.
+5. Setelah pengisian, titik penjaga dibaca ulang:
+   - **sudah terisi** → urutan lanjut dari **titik 1**
+   - **masih habis** → tunggu sebentar, coba lagi
+6. Kalau batas percobaan atau batas pembelian tercapai → **berhenti dengan pesan jelas**.
+
+Dua pilihan pengisian:
+
+| Mode | Untuk apa |
+|---|---|
+| **Tunggu sendiri** | Energi terisi otomatis oleh game. Tidak ada tap sama sekali, hanya menunggu lalu memeriksa. |
+| **Beli energi** | Menjalankan langkah tap: buka toko → tekan beli → tutup. Berbasis waktu, bukan warna. |
+
+### Kenapa langkah beli berbasis waktu, bukan warna
+
+Setelah tombol beli ditekan, layar berubah-ubah: animasi, dialog konfirmasi, angka berkurang.
+Kalau langkah beli menunggu warna tertentu, prosesnya akan macet. Jadi urutannya: tap → tunggu
+N detik → tap → tunggu N detik. Warna hanya dipakai untuk dua hal: mendeteksi habis dan
+memeriksa hasil.
+
+### Pengaman supaya poin game tidak terbuang
+
+| Pengaman | Bawaan | Arti |
+|---|---|---|
+| Maks percobaan berturut-turut | 3× | Gagal 3× berturut-turut → berhenti |
+| Maks pembelian per sesi | 10× | Pagar mutlak, apa pun yang terjadi |
+| Jeda sebelum coba lagi | 3 detik | Memberi waktu animasi game selesai |
+
+Kalau energi dibeli memakai poin hasil bermain, pengaman ini yang mencegah aplikasi menekan
+tombol beli terus-menerus ketika saldo poin sudah tidak cukup.
+
+### Yang perlu disiapkan
+
+1. Tandai satu titik di area energi. Ambil warnanya **saat energi habis**.
+2. Pilih **Isi energi otomatis → Beli energi**.
+3. Tambahkan langkah: ketuk tombol buka toko, lalu tombol beli, lalu tombol tutup.
+4. Atur jeda tiap langkah sesuai kecepatan animasi game.
+
+Semua pengaturan ada di **⚙ → Loop & Kecepatan → Isi energi otomatis**.
+
 ## Semua fitur
 
 ### Macro Biasa
@@ -161,6 +216,8 @@ Panduan lengkap tiap menu ada di bagian [Semua fitur](#semua-fitur).
 **Cara mengklik**
 
 - Klik dipicu kondisi warna layar, bukan jeda waktu. Tidak ada pengaturan jeda per klik.
+- **Isi energi otomatis:** satu titik penjaga mendeteksi energi habis, lalu urutan
+  dijeda dan diisi lagi. Lihat [Mengisi energi otomatis](#mengisi-energi-otomatis).
 - Dua kondisi: **Cocok** (warna mendekati target) dan **Berubah** (warna menyimpang dari
   acuan).
 - **Titik selalu mengklik tempat ia memantau.** Tidak ada lagi opsi "pantau di sini, klik di
@@ -294,6 +351,9 @@ Ini bagian yang paling sering menimbulkan salah paham, jadi ditulis apa adanya.
 - **Penyebab aplikasi lain tertutup sendiri tidak bisa disimpulkan dari sini.**
   Pengukuran memori clicker pada sesi panjang tidak menunjukkan kebocoran, tetapi itu bukan
   bukti bahwa fitur ini bebas dari pengaruh terhadap aplikasi lain.
+- **Isi energi otomatis tidak bisa memastikan pembelian berhasil.** Yang diperiksa hanya
+  warna di titik penjaga. Kalau game menampilkan \"poin tidak cukup\" sementara warna
+  tetap \"habis\", aplikasi menganggapnya gagal lalu berhenti setelah batas percobaan.
 - **Verifikasi rilis** dilakukan lewat unit test, lint, dan pemeriksaan berkas APK — bukan
   pengujian di perangkat fisik. Karena itu tidak ada jaminan bebas cacat di semua perangkat.
 

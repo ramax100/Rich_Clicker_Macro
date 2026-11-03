@@ -18,6 +18,18 @@ package com.richclickermacro.smart
  *  - [SmartOrderMode.SEQUENCE] walks points 1 -> last instead of firing whichever
  *    matches, and counts completed passes so [SmartProfile.loopLimit] can end the run.
  */
+/** What the run should do after a recovery attempt has been verified. */
+enum class RecoveryOutcome {
+    /** Energy is back: the ordered run restarts from point 1. */
+    RESUMED,
+
+    /** Still empty, but attempts remain. Wait, then recover again. */
+    RETRY,
+
+    /** Safety limit reached. The caller must stop and say why. */
+    STOPPED
+}
+
 class SmartEngine(profile: SmartProfile) {
 
     sealed class Decision {
@@ -35,6 +47,18 @@ class SmartEngine(profile: SmartProfile) {
 
         /** Stop the run; the reason is safe to show and to log. */
         data class Stop(val reason: String, val message: String) : Decision()
+
+        /**
+         * The energy guard says "empty". The caller performs the recovery (wait, or the
+         * user's tap sequence), then reports back through [completeRecovery].
+         */
+        data class Recover(
+            val attempt: Int,
+            val maxAttempts: Int,
+            val buys: Int,
+            val buyLimit: Int,
+            val steps: List<SmartRecoveryStep>
+        ) : Decision()
     }
 
     private val sanitized = SmartLimits.sanitizeProfile(profile)
@@ -65,8 +89,64 @@ class SmartEngine(profile: SmartProfile) {
     private var sequenceIndex = 0
     private var completedLoops = 0
 
+    // Energy recovery state.
+    private var inRecovery = false
+    private var guardHits = 0
+    private var recoveryAttempt = 0
+    private var recoveryBuys = 0
+
     val actionCount: Int get() = totalActions
     val loopCount: Int get() = completedLoops
+    val recoveryAttempts: Int get() = recoveryAttempt
+    val recoveryBuyCount: Int get() = recoveryBuys
+
+    /** True while the caller is expected to perform a recovery sequence. */
+    fun isRecovering(): Boolean = inRecovery
+
+    /** Points that are watched only, never clicked, and never part of the order. */
+    fun guardPoint(): SmartPoint? {
+        val id = sanitized.energyGuardId ?: return null
+        if (sanitized.energyMode == EnergyMode.OFF) return null
+        return sanitized.points.firstOrNull { it.id == id && it.enabled && it.isGuard }
+    }
+
+    /**
+     * True when the guard area reports "empty" for this sample, null when unknown.
+     * Shared by [evaluate] and by the caller's post-recovery check so both use exactly
+     * the same rule.
+     */
+    fun isGuardEmpty(sample: Int?): Boolean? {
+        val guard = guardPoint() ?: return null
+        if (sample == null) return null
+        return when (guard.condition) {
+            SmartCondition.COLOR_MATCH ->
+                ColorMatcher.isMatch(sample, guard.targetColor, guard.tolerance)
+            SmartCondition.COLOR_CHANGE -> {
+                val state = states.getOrPut(guard.id) { PointState() }
+                val baseline = state.baseline
+                if (baseline == null) {
+                    state.baseline = sample
+                    null
+                } else {
+                    ColorMatcher.isChanged(sample, baseline, guard.tolerance)
+                }
+            }
+        }
+    }
+
+    /** Recovery was interrupted (gesture rejected, sample failed): count nothing. */
+    fun abortRecovery() {
+        inRecovery = false
+        guardHits = 0
+    }
+
+    /** Every enabled point that must be sampled: sequence points plus the guard. */
+    fun sampledPoints(): List<SmartPoint> = sanitized.points.filter { it.enabled }
+
+    companion object {
+        /** Two agreeing scans, so one bad frame cannot trigger a purchase. */
+        const val GUARD_CONFIRM_SCANS = 2
+    }
 
     private class PointState {
         var baseline: Int? = null
@@ -85,6 +165,10 @@ class SmartEngine(profile: SmartProfile) {
         rotation = 0
         sequenceIndex = 0
         completedLoops = 0
+        inRecovery = false
+        guardHits = 0
+        recoveryAttempt = 0
+        recoveryBuys = 0
         clearBurst()
         states.clear()
         sanitized.points.filter { it.enabled }.forEach { point ->
@@ -92,7 +176,12 @@ class SmartEngine(profile: SmartProfile) {
         }
     }
 
-    fun enabledPoints(): List<SmartPoint> = sanitized.points.filter { it.enabled }
+    /**
+     * The 1 -> last order. Guard points are excluded: they are watched, never clicked,
+     * so they must not take a turn nor advance the loop counter.
+     */
+    fun enabledPoints(): List<SmartPoint> =
+        sanitized.points.filter { it.enabled && !it.isGuard }
 
     fun lastObservedColor(pointId: Long): Int? = states[pointId]?.lastColor
 
@@ -159,6 +248,36 @@ class SmartEngine(profile: SmartProfile) {
                 }
             }
             state.consecutive = if (satisfied) (state.consecutive + 1).coerceAtMost(Int.MAX_VALUE - 1) else 0
+        }
+
+        // Energy guard. Checked on every scan, not behind the click gate, because it
+        // decides whether the ordered run may continue at all.
+        val guard = guardPoint()
+        if (guard != null && !inRecovery) {
+            val empty = isGuardEmpty(samples[guard.id])
+            if (empty == true) {
+                guardHits++
+                if (guardHits >= GUARD_CONFIRM_SCANS) {
+                    inRecovery = true
+                    guardHits = 0
+                    // A pending burst belongs to the old state; drop it rather than
+                    // spending clicks on a screen that is out of energy.
+                    clearBurst()
+                    return Decision.Recover(
+                        attempt = recoveryAttempt + 1,
+                        maxAttempts = sanitized.recoveryAttempts,
+                        buys = recoveryBuys,
+                        buyLimit = sanitized.recoveryBuyLimit,
+                        steps = if (sanitized.energyMode == EnergyMode.BUY) {
+                            sanitized.recoverySteps
+                        } else {
+                            emptyList()
+                        }
+                    )
+                }
+            } else if (empty == false) {
+                guardHits = 0
+            }
         }
 
         // Global speed gate: no point may fire before the shared gap has elapsed.
@@ -288,6 +407,40 @@ class SmartEngine(profile: SmartProfile) {
         val state = states[pointId] ?: return
         state.consecutive = 0
         state.readyAtMs = nowMs + sanitized.cooldownMs
+    }
+
+    /**
+     * Called once the caller has finished the recovery sequence and re-read the guard.
+     *
+     * @param stillEmpty true when the guard area still reports "empty" after the attempt.
+     */
+    fun completeRecovery(stillEmpty: Boolean, nowMs: Long): RecoveryOutcome {
+        inRecovery = false
+        guardHits = 0
+        // Recovery is a pause, not an idle stretch: do not let the idle guard fire now.
+        lastActionAtMs = nowMs
+        nextActionAtMs = nowMs
+        if (sanitized.energyMode == EnergyMode.BUY) recoveryBuys++
+        if (!stillEmpty) {
+            recoveryAttempt = 0
+            // Restart the order from point 1. The step that was interrupted never ran,
+            // so continuing from where it stopped would silently skip earlier points.
+            sequenceIndex = 0
+            states.values.forEach { it.consecutive = 0 }
+            return RecoveryOutcome.RESUMED
+        }
+        recoveryAttempt++
+        if (recoveryBuys >= sanitized.recoveryBuyLimit) return RecoveryOutcome.STOPPED
+        if (recoveryAttempt >= sanitized.recoveryAttempts) return RecoveryOutcome.STOPPED
+        return RecoveryOutcome.RETRY
+    }
+
+    /** User-facing reason for a stop caused by the recovery limits. */
+    fun recoveryStopMessage(): String = when {
+        recoveryBuys >= sanitized.recoveryBuyLimit ->
+            "Energi belum terisi setelah ${recoveryBuys}× percobaan isi. Dihentikan supaya poin tidak terpakai terus."
+        else ->
+            "Energi belum terisi setelah ${recoveryAttempt}× percobaan. Dihentikan."
     }
 
     fun statusText(): String = when {

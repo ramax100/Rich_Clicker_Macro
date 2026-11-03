@@ -70,6 +70,11 @@ class SmartOverlayController(
     private var runFrame: ScreenFrame? = null
     private var expectedPackage: String? = null
     private var capturingColor = false
+
+    private enum class PickPurpose { POINT, RECOVERY_STEP }
+
+    /** What the next full-screen tap is for. */
+    private var pickPurpose = PickPurpose.POINT
     private var activeDialog: AlertDialog? = null
     private var disposing = false
     private var lastNotice = ""
@@ -343,7 +348,8 @@ class SmartOverlayController(
             stopWithNotice("Layar berubah. Smart click dihentikan.", "screen_change")
             return
         }
-        val points = active.enabledPoints()
+        // The guard point is watched too, so it must be in the same screenshot.
+        val points = active.sampledPoints()
         val patches = points.associate { it.id to (it.watchX to it.watchY) }
         val forbidden = listOfNotNull(toolbarNormalizedBox())
         sampler.sample(patches, forbidden) { result, error ->
@@ -408,6 +414,121 @@ class SmartOverlayController(
                     stopWithNotice(decision.message, decision.reason)
                 }
                 is SmartEngine.Decision.Fire -> dispatch(decision, generation)
+                is SmartEngine.Decision.Recover -> runRecovery(generation, decision)
+            }
+        }
+    }
+
+    // ------------------------------------------------------------ energy recovery
+
+    /**
+     * Energy ran out. Step the ordered run aside, refill (wait, or tap the user's
+     * recovery steps), then check the guard area before allowing the run to continue.
+     */
+    private fun runRecovery(generation: Long, decision: SmartEngine.Decision.Recover) {
+        if (generation != runGeneration || runState != SmartRunState.RUNNING) return
+        val profile = currentProfile ?: return
+        MacroDiagnostics.record(
+            service,
+            "smart_energy_recover",
+            "attempt=${decision.attempt}/${decision.maxAttempts} steps=${decision.steps.size} " +
+                "buys=${decision.buys}/${decision.buyLimit}"
+        )
+        if (decision.steps.isEmpty()) {
+            statusLabel.text = "Menunggu energi terisi…"
+            handler.postDelayed({ verifyRecovery(generation) }, profile.recoveryRetryDelayMs)
+            return
+        }
+        statusLabel.text = "Isi energi: percobaan ${decision.attempt}/${decision.maxAttempts}"
+        executeRecoveryStep(generation, decision.steps, 0)
+    }
+
+    /** Recovery taps are time-based on purpose: the screen changes after each one. */
+    private fun executeRecoveryStep(
+        generation: Long,
+        steps: List<SmartRecoveryStep>,
+        index: Int
+    ) {
+        if (generation != runGeneration || runState != SmartRunState.RUNNING) return
+        val frame = runFrame ?: return
+        if (index >= steps.size) {
+            verifyRecovery(generation)
+            return
+        }
+        val step = steps[index]
+        val (x, y) = GestureSafety.clampToFrame(frame, frame.centerX(step.x), frame.centerY(step.y))
+        if (isUnderToolbar(x, y)) {
+            engine?.abortRecovery()
+            stopWithNotice("Toolbar menutupi langkah isi energi. Pindahkan toolbar.", "recovery_toolbar")
+            return
+        }
+        statusLabel.text = "Isi energi ${index + 1}/${steps.size}"
+        val accepted = service.performAction(
+            actionType = PointActionType.TAP,
+            startX = x,
+            startY = y,
+            endX = x,
+            endY = y,
+            durationMs = 40L,
+            onCompleted = {
+                if (generation == runGeneration && runState == SmartRunState.RUNNING) {
+                    handler.postDelayed(
+                        { executeRecoveryStep(generation, steps, index + 1) },
+                        step.waitMs
+                    )
+                }
+            },
+            onCancelled = {
+                if (generation == runGeneration && runState == SmartRunState.RUNNING) {
+                    engine?.abortRecovery()
+                    stopWithNotice("Gesture isi energi dibatalkan sistem.", "recovery_cancelled")
+                }
+            }
+        )
+        if (!accepted) {
+            engine?.abortRecovery()
+            stopWithNotice("Sistem menolak gesture isi energi.", "recovery_rejected")
+        }
+    }
+
+    /**
+     * Reads the guard area again. Only a changed colour counts as success, so a failed
+     * purchase can never run away and keep spending points.
+     */
+    private fun verifyRecovery(generation: Long) {
+        if (generation != runGeneration || runState != SmartRunState.RUNNING) return
+        val active = engine ?: return
+        val profile = currentProfile ?: return
+        val guard = active.guardPoint()
+        if (guard == null) {
+            active.abortRecovery()
+            scheduleScan(generation, profile.scanIntervalMs)
+            return
+        }
+        statusLabel.text = "Memeriksa energi…"
+        val patches = mapOf(guard.id to (guard.watchX to guard.watchY))
+        sampler.sample(patches, listOfNotNull(toolbarNormalizedBox())) { result, _ ->
+            if (generation != runGeneration || runState != SmartRunState.RUNNING) return@sample
+            val empty = active.isGuardEmpty(result?.get(guard.id))
+            if (empty == null) {
+                // Could not confirm the result. Count nothing and look again shortly.
+                active.abortRecovery()
+                handler.postDelayed({ scheduleScan(generation, 0L) }, profile.recoveryRetryDelayMs)
+                return@sample
+            }
+            when (active.completeRecovery(empty, SystemClock.uptimeMillis())) {
+                RecoveryOutcome.RESUMED -> {
+                    MacroDiagnostics.record(service, "smart_energy_resumed", "buys=${active.recoveryBuyCount}")
+                    scheduleScan(generation, 0L)
+                }
+                RecoveryOutcome.RETRY -> {
+                    MacroDiagnostics.record(service, "smart_energy_retry", "attempt=${active.recoveryAttempts}")
+                    handler.postDelayed({ scheduleScan(generation, 0L) }, profile.recoveryRetryDelayMs)
+                }
+                RecoveryOutcome.STOPPED -> {
+                    MacroDiagnostics.record(service, "smart_energy_limit", "buys=${active.recoveryBuyCount}")
+                    stopWithNotice(active.recoveryStopMessage(), "recovery_limit")
+                }
             }
         }
     }
@@ -492,6 +613,8 @@ class SmartOverlayController(
                 stopWithNotice(decision.message, decision.reason)
             }
             is SmartEngine.Decision.Wait -> scheduleScan(generation, currentProfile?.scanIntervalMs ?: 450L)
+            // nextRepeat() never reports recovery: it only drains an armed burst.
+            is SmartEngine.Decision.Recover -> scheduleScan(generation, currentProfile?.scanIntervalMs ?: 450L)
         }
     }
 
@@ -898,7 +1021,7 @@ class SmartOverlayController(
 
         // Row 2: one tap to place a point AND read its colour. No dragging needed.
         addButton = filledButton("＋ Ketuk Titik di Layar", "Tandai titik dengan mengetuk layar", Color.rgb(13, 148, 136)) {
-            startPick()
+            startPick(PickPurpose.POINT)
         }.apply { textSize = 12f }
         content.addView(addButton, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(34f)).apply {
             topMargin = dp(3f)
@@ -1104,7 +1227,7 @@ class SmartOverlayController(
      * read its colour. The picker window is removed before sampling so it cannot
      * appear in the screenshot.
      */
-    private fun startPick() {
+    private fun startPick(purpose: PickPurpose) {
         if (isRunning() || capturingColor || pickerView != null) return
         if (holders.size >= SmartProfile.MAX_POINTS) {
             toast("Maksimal ${SmartProfile.MAX_POINTS} titik smart.")
@@ -1115,12 +1238,17 @@ class SmartOverlayController(
             return
         }
         val frame = runCatching { screenFrame() }.getOrNull() ?: return
+        pickPurpose = purpose
         val root = SmartPickerLayout(service).apply {
             setBackgroundColor(Color.argb(90, 0, 0, 0))
             contentDescription = "Ketuk layar untuk menandai titik smart"
         }
         val banner = TextView(service).apply {
-            text = "Ketuk bagian layar yang mau DIKLIK"
+            text = if (purpose == PickPurpose.RECOVERY_STEP) {
+                "Ketuk tombol untuk langkah isi energi"
+            } else {
+                "Ketuk bagian layar yang mau DIKLIK"
+            }
             textSize = 13f
             setTextColor(Color.WHITE)
             gravity = Gravity.CENTER
@@ -1168,6 +1296,7 @@ class SmartOverlayController(
 
     private fun cancelPick() {
         removePicker()
+        pickPurpose = PickPurpose.POINT
         toolbar?.visibility = View.VISIBLE
         updateUi()
     }
@@ -1180,6 +1309,25 @@ class SmartOverlayController(
     private fun finishPick(nx: Float, ny: Float) {
         removePicker()
         toolbar?.visibility = View.VISIBLE
+        val purpose = pickPurpose
+        pickPurpose = PickPurpose.POINT
+        if (purpose == PickPurpose.RECOVERY_STEP) {
+            val profile = currentProfile ?: return
+            if (profile.recoverySteps.size >= SmartProfile.MAX_RECOVERY_STEPS) {
+                toast("Maksimal ${SmartProfile.MAX_RECOVERY_STEPS} langkah isi energi.")
+                updateUi()
+                return
+            }
+            val step = SmartLimits.sanitizeRecoveryStep(SmartRecoveryStep(nx, ny))
+            currentProfile = SmartLimits.sanitizeProfile(
+                profile.copy(recoverySteps = profile.recoverySteps + step)
+            )
+            persist()
+            updateUi()
+            val number = currentProfile?.recoverySteps?.size ?: 0
+            toast("Langkah $number ditambahkan. Atur jeda di menu isi energi.")
+            return
+        }
         val box = toolbarNormalizedBox()
         if (box != null && SmartGeometry.isPatchObscured(SmartGeometry.patchBox(nx, ny, PATCH_RADIUS_NORMALIZED), listOf(box))) {
             toast("Posisi itu tertutup toolbar. Geser toolbar dulu, lalu coba lagi.")
@@ -1226,6 +1374,236 @@ class SmartOverlayController(
             holder.point = holder.point.copy(repeatCount = value)
             persist()
             updateUi()
+        }
+    }
+
+    // ------------------------------------------------------------ energy settings
+
+    private fun energyTitle(mode: EnergyMode): String = when (mode) {
+        EnergyMode.OFF -> "Mati"
+        EnergyMode.WAIT -> "Tunggu sendiri"
+        EnergyMode.BUY -> "Beli energi"
+    }
+
+    private fun chooseEnergyMode() {
+        if (isRunning()) return
+        val profile = currentProfile ?: return
+        val modes = EnergyMode.values()
+        val labels = arrayOf(
+            "Mati — tidak mengisi energi",
+            "Tunggu sendiri — energi terisi otomatis oleh game",
+            "Beli energi — jalankan langkah beli"
+        )
+        val dialog = AlertDialog.Builder(service, android.R.style.Theme_Material_Light_Dialog_Alert)
+            .setTitle("Isi energi otomatis")
+            .setSingleChoiceItems(labels, modes.indexOf(profile.energyMode)) { d, which ->
+                d.dismiss()
+                var updated = profile.copy(energyMode = modes[which])
+                // Turning it on without a guard would do nothing, so pick the first
+                // point as a starting suggestion the user can change right away.
+                if (modes[which] != EnergyMode.OFF && updated.energyGuardId == null) {
+                    val candidate = holders.firstOrNull()?.id
+                    if (candidate != null) {
+                        updated = updated.copy(energyGuardId = candidate)
+                        applyGuardFlag(updated, candidate)
+                    }
+                }
+                currentProfile = SmartLimits.sanitizeProfile(updated)
+                persist()
+                updateUi()
+                showRunOptions()
+                toast("Isi energi: ${energyTitle(modes[which])}")
+            }
+            .setNegativeButton("Batal", null)
+            .create()
+        dialog.window?.setType(WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY)
+        showDialog(dialog)
+    }
+
+    private fun applyGuardFlag(profile: SmartProfile, guardId: Long): SmartProfile {
+        holders.forEach { holder ->
+            holder.point = holder.point.copy(isGuard = holder.id == guardId)
+        }
+        val points = holders.map(::toPoint)
+        return profile.copy(points = points, energyGuardId = guardId)
+    }
+
+    private fun chooseGuardPoint() {
+        if (isRunning()) return
+        val profile = currentProfile ?: return
+        if (holders.isEmpty()) {
+            toast("Tambahkan titik dulu.")
+            return
+        }
+        val labels = holders.mapIndexed { index, holder ->
+            val marker = if (holder.id == profile.energyGuardId) " ✓" else ""
+            "Titik ${index + 1} (${holder.point.label})$marker"
+        }.toTypedArray()
+        val checked = holders.indexOfFirst { it.id == profile.energyGuardId }
+        val dialog = AlertDialog.Builder(service, android.R.style.Theme_Material_Light_Dialog_Alert)
+            .setTitle("Titik penjaga energi")
+            .setSingleChoiceItems(labels, checked) { d, which ->
+                d.dismiss()
+                val holder = holders.getOrNull(which) ?: return@setSingleChoiceItems
+                currentProfile = SmartLimits.sanitizeProfile(applyGuardFlag(profile, holder.id))
+                persist()
+                updateUi()
+                showRunOptions()
+                toast(
+                    "Titik ${holder.point.label} jadi penjaga. " +
+                        "Ambil warnanya saat energi HABIS lewat Atur Titik Ini."
+                )
+            }
+            .setNegativeButton("Batal", null)
+            .create()
+        dialog.window?.setType(WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY)
+        showDialog(dialog)
+    }
+
+    private fun manageRecoverySteps() {
+        if (isRunning()) return
+        val profile = currentProfile ?: return
+        val rows = mutableListOf<View>()
+        rows += optionRow(
+            "Tambah langkah",
+            "${profile.recoverySteps.size}/${SmartProfile.MAX_RECOVERY_STEPS}",
+            "Ketuk tombol di layar game. Setiap langkah diikuti jeda yang bisa diatur."
+        ) { dismissDialog(); startPick(PickPurpose.RECOVERY_STEP) }
+
+        profile.recoverySteps.forEachIndexed { index, step ->
+            rows += optionRow(
+                "Langkah ${index + 1}",
+                String.format(java.util.Locale.US, "jeda %.1f dtk", step.waitMs / 1000.0),
+                "Ketuk untuk mengubah jeda setelah langkah ini."
+            ) { dismissDialog(); editRecoveryStepWait(index) }
+        }
+
+        if (profile.recoverySteps.isNotEmpty()) {
+            rows += optionRow(
+                "Hapus langkah terakhir", "",
+                "Menghapus langkah ${profile.recoverySteps.size} saja."
+            ) {
+                dismissDialog()
+                currentProfile = SmartLimits.sanitizeProfile(
+                    profile.copy(recoverySteps = profile.recoverySteps.dropLast(1))
+                )
+                persist()
+                updateUi()
+                manageRecoverySteps()
+            }
+            rows += optionRow(
+                "Hapus semua langkah", "",
+                "Mengosongkan seluruh rangkaian isi energi."
+            ) {
+                dismissDialog()
+                currentProfile = SmartLimits.sanitizeProfile(
+                    profile.copy(recoverySteps = emptyList())
+                )
+                persist()
+                updateUi()
+                manageRecoverySteps()
+            }
+        }
+
+        val dialog = AlertDialog.Builder(service, android.R.style.Theme_Material_Light_Dialog_Alert)
+            .setTitle("Langkah isi energi")
+            .setView(optionList(*rows.toTypedArray()))
+            .setNegativeButton("Kembali") { _, _ -> showRunOptions() }
+            .create()
+        dialog.window?.setType(WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY)
+        showDialog(dialog)
+    }
+
+    private fun editRecoveryStepWait(index: Int) {
+        val profile = currentProfile ?: return
+        val steps = profile.recoverySteps
+        val step = steps.getOrNull(index) ?: return
+        val input = EditText(service).apply {
+            inputType = InputType.TYPE_CLASS_NUMBER
+            setText((step.waitMs / 1_000L).coerceAtLeast(1L).toString())
+            setSelectAllOnFocus(true)
+        }
+        showNumberDialog(
+            "Jeda setelah langkah ${index + 1}",
+            "Berapa detik menunggu sebelum langkah berikutnya. Beri waktu animasi game selesai " +
+                "(1–${SmartRecoveryStep.MAX_WAIT_MS / 1000L} detik).",
+            input,
+            1,
+            (SmartRecoveryStep.MAX_WAIT_MS / 1000L).toInt()
+        ) { seconds ->
+            val updated = steps.toMutableList()
+            updated[index] = step.copy(waitMs = seconds * 1_000L)
+            currentProfile = SmartLimits.sanitizeProfile(profile.copy(recoverySteps = updated))
+            persist()
+            updateUi()
+            manageRecoverySteps()
+        }
+    }
+
+    private fun editRecoveryAttempts() {
+        val profile = currentProfile ?: return
+        val input = EditText(service).apply {
+            inputType = InputType.TYPE_CLASS_NUMBER
+            setText(profile.recoveryAttempts.toString())
+            setSelectAllOnFocus(true)
+        }
+        showNumberDialog(
+            "Maks percobaan isi energi",
+            "Kalau energi masih habis setelah sekian percobaan berturut-turut, aplikasi berhenti. " +
+                "Jangan dibuat terlalu besar.",
+            input,
+            SmartProfile.MIN_RECOVERY_ATTEMPTS,
+            SmartProfile.MAX_RECOVERY_ATTEMPTS
+        ) { value ->
+            currentProfile = SmartLimits.sanitizeProfile(profile.copy(recoveryAttempts = value))
+            persist()
+            updateUi()
+            showRunOptions()
+        }
+    }
+
+    private fun editRecoveryBuys() {
+        val profile = currentProfile ?: return
+        val input = EditText(service).apply {
+            inputType = InputType.TYPE_CLASS_NUMBER
+            setText(profile.recoveryBuyLimit.toString())
+            setSelectAllOnFocus(true)
+        }
+        showNumberDialog(
+            "Maks pembelian per sesi",
+            "Pagar mutlak: setelah sekian pembelian, aplikasi berhenti walau energi belum terisi. " +
+                "Menjaga poin game tidak terpakai terus.",
+            input,
+            SmartProfile.MIN_RECOVERY_BUY_LIMIT,
+            SmartProfile.MAX_RECOVERY_BUY_LIMIT
+        ) { value ->
+            currentProfile = SmartLimits.sanitizeProfile(profile.copy(recoveryBuyLimit = value))
+            persist()
+            updateUi()
+            showRunOptions()
+        }
+    }
+
+    private fun editRecoveryDelay() {
+        val profile = currentProfile ?: return
+        val input = EditText(service).apply {
+            inputType = InputType.TYPE_CLASS_NUMBER
+            setText(((profile.recoveryRetryDelayMs / 1_000L).coerceAtLeast(1L)).toString())
+            setSelectAllOnFocus(true)
+        }
+        showNumberDialog(
+            "Jeda sebelum coba lagi",
+            "Berapa detik menunggu sebelum mencoba mengisi energi lagi setelah gagal.",
+            input,
+            (SmartProfile.MIN_RECOVERY_RETRY_DELAY_MS / 1_000L).toInt(),
+            (SmartProfile.MAX_RECOVERY_RETRY_DELAY_MS / 1_000L).toInt()
+        ) { seconds ->
+            currentProfile = SmartLimits.sanitizeProfile(
+                profile.copy(recoveryRetryDelayMs = seconds * 1_000L)
+            )
+            persist()
+            updateUi()
+            showRunOptions()
         }
     }
 
@@ -1451,6 +1829,46 @@ class SmartOverlayController(
                 "Warna harus cocok", "${profile.confirmSamples}× berturut-turut",
                 "Berlaku untuk semua titik. 1 = langsung klik. 2 atau lebih = lebih yakin, tapi lebih lambat."
             ) { dismissDialog(); editTiming(3) }
+        }
+
+        rows += sectionLabel("Isi energi otomatis")
+        rows += optionRow(
+            "Isi energi otomatis", energyTitle(profile.energyMode),
+            "Kalau energi di game habis, urutan dijeda lalu diisi lagi, setelah itu mulai dari titik 1. " +
+                "Pilih Mati kalau tidak dipakai."
+        ) { dismissDialog(); chooseEnergyMode() }
+
+        if (profile.energyMode != EnergyMode.OFF) {
+            val guard = holders.firstOrNull { it.id == profile.energyGuardId }
+            rows += optionRow(
+                "Titik penjaga energi", guard?.point?.label ?: "Belum dipilih",
+                "Titik yang memantau area energi. Titik ini hanya dilihat, tidak diklik, dan " +
+                    "tidak ikut urutan. Ambil warnanya saat energi HABIS."
+            ) { dismissDialog(); chooseGuardPoint() }
+            if (profile.energyMode == EnergyMode.BUY) {
+                rows += optionRow(
+                    "Langkah isi energi",
+                    if (profile.recoverySteps.isEmpty()) "Belum ada" else "${profile.recoverySteps.size} langkah",
+                    "Rangkaian tap untuk membeli energi: buka toko, tekan beli, tutup. " +
+                        "Berbasis waktu, bukan warna."
+                ) { dismissDialog(); manageRecoverySteps() }
+            }
+            rows += optionRow(
+                "Maks percobaan", "${profile.recoveryAttempts}×",
+                "Kalau energi masih habis setelah ${profile.recoveryAttempts}× percobaan, " +
+                    "aplikasi berhenti alih-alih mengulang terus."
+            ) { dismissDialog(); editRecoveryAttempts() }
+            if (profile.energyMode == EnergyMode.BUY) {
+                rows += optionRow(
+                    "Maks pembelian per sesi", "${profile.recoveryBuyLimit}×",
+                    "Pagar mutlak. Setelah jumlah ini tercapai, aplikasi berhenti walau energi belum terisi."
+                ) { dismissDialog(); editRecoveryBuys() }
+            }
+            rows += optionRow(
+                "Jeda sebelum coba lagi",
+                String.format(java.util.Locale.US, "%.1f detik", profile.recoveryRetryDelayMs / 1000.0),
+                "Waktu tunggu sebelum mencoba mengisi lagi. Beri waktu animasi game selesai."
+            ) { dismissDialog(); editRecoveryDelay() }
         }
 
         rows += sectionLabel("Pengaman")
@@ -2106,9 +2524,9 @@ class SmartOverlayController(
 
         /**
          * Time given to our own windows to leave the screen before the screenshot.
-         * The settings dialog animates out; 250 ms covers it plus a frame.
+         * The settings dialog animates out; 400 ms covers slow devices too.
          */
-        private const val CAPTURE_SETTLE_MS = 250L
+        private const val CAPTURE_SETTLE_MS = 400L
 
         /** A capture still flagged after this long never got its callback. */
         private const val CAPTURE_STUCK_MS = 6_000L

@@ -45,6 +45,33 @@ enum class SmartOrderMode {
     SEQUENCE
 }
 
+/**
+ * What to do when the watched energy area reports "empty".
+ *
+ * [OFF] keeps the old behaviour: the run simply keeps waiting for its normal conditions.
+ * [WAIT] pauses the ordered run and waits for the game to refill on its own.
+ * [BUY] runs the user's recovery steps (open shop, tap buy, close shop) and then checks
+ * the guard area again. Buying is capped twice: per consecutive failure and per session.
+ */
+enum class EnergyMode {
+    OFF,
+    WAIT,
+    BUY
+}
+
+/** One tap of a recovery sequence, followed by a fixed wait. Taps are time-based. */
+data class SmartRecoveryStep(
+    val x: Float,
+    val y: Float,
+    val waitMs: Long = DEFAULT_WAIT_MS
+) {
+    companion object {
+        const val MIN_WAIT_MS = 100L
+        const val MAX_WAIT_MS = 30_000L
+        const val DEFAULT_WAIT_MS = 1_500L
+    }
+}
+
 data class SmartPoint(
     val id: Long,
     val label: String,
@@ -62,7 +89,13 @@ data class SmartPoint(
      * once, then the burst is sent back-to-back; it is not re-checked between
      * repeats because the first click usually changes the screen.
      */
-    val repeatCount: Int = DEFAULT_REPEAT_COUNT
+    val repeatCount: Int = DEFAULT_REPEAT_COUNT,
+    /**
+     * A guard point is watched but never clicked, and it is not part of the 1 -> last
+     * order. It exists so the run can tell "energy is empty" apart from "the button is
+     * simply not ready yet".
+     */
+    val isGuard: Boolean = false
 ) {
     /**
      * A point always clicks where it watches. The old "watch here, tap there" option
@@ -103,7 +136,18 @@ data class SmartProfile(
     val orderMode: SmartOrderMode = SmartOrderMode.SEQUENCE,
     /** Completed 1 -> last cycles before stopping. 0 means unlimited. */
     val loopLimit: Int = 0,
-    val speedMode: SmartSpeedMode = SmartSpeedMode.RECOMMENDED
+    val speedMode: SmartSpeedMode = SmartSpeedMode.RECOMMENDED,
+    /** Off by default: existing profiles behave exactly as before. */
+    val energyMode: EnergyMode = EnergyMode.OFF,
+    /** Id of the point used as the energy guard, or null when none is marked. */
+    val energyGuardId: Long? = null,
+    val recoverySteps: List<SmartRecoveryStep> = emptyList(),
+    /** Consecutive failed recoveries before the run stops. */
+    val recoveryAttempts: Int = DEFAULT_RECOVERY_ATTEMPTS,
+    /** Hard ceiling on purchases per run, whatever else happens. */
+    val recoveryBuyLimit: Int = DEFAULT_RECOVERY_BUY_LIMIT,
+    /** Pause before trying again after a failed recovery. */
+    val recoveryRetryDelayMs: Long = DEFAULT_RECOVERY_RETRY_DELAY_MS
 ) {
     companion object {
         const val MAX_NAME_LENGTH = 40
@@ -134,6 +178,18 @@ data class SmartProfile(
         const val DEFAULT_IDLE_TIMEOUT_SEC = 120
 
         const val MAX_ACTIONS_LIMIT = 1_000_000
+
+        /** Recovery safety limits. Small numbers on purpose: failing loudly beats looping. */
+        const val MIN_RECOVERY_ATTEMPTS = 1
+        const val MAX_RECOVERY_ATTEMPTS = 10
+        const val DEFAULT_RECOVERY_ATTEMPTS = 3
+        const val MIN_RECOVERY_BUY_LIMIT = 1
+        const val MAX_RECOVERY_BUY_LIMIT = 100
+        const val DEFAULT_RECOVERY_BUY_LIMIT = 10
+        const val MIN_RECOVERY_RETRY_DELAY_MS = 500L
+        const val MAX_RECOVERY_RETRY_DELAY_MS = 60_000L
+        const val DEFAULT_RECOVERY_RETRY_DELAY_MS = 3_000L
+        const val MAX_RECOVERY_STEPS = 6
         const val MAX_COUNTDOWN_SECONDS = 10
         const val MAX_LOOP_LIMIT = 1_000_000
 
@@ -179,7 +235,32 @@ object SmartLimits {
         loopLimit = profile.loopLimit.coerceIn(0, SmartProfile.MAX_LOOP_LIMIT),
         // v0.9.3: the run always walks point 1 -> last, then repeats. "Bebas" was
         // removed because the loop counter only means something in order.
-        orderMode = SmartOrderMode.SEQUENCE
+        orderMode = SmartOrderMode.SEQUENCE,
+        recoverySteps = profile.recoverySteps
+            .take(SmartProfile.MAX_RECOVERY_STEPS)
+            .map(::sanitizeRecoveryStep),
+        recoveryAttempts = profile.recoveryAttempts.coerceIn(
+            SmartProfile.MIN_RECOVERY_ATTEMPTS, SmartProfile.MAX_RECOVERY_ATTEMPTS
+        ),
+        recoveryBuyLimit = profile.recoveryBuyLimit.coerceIn(
+            SmartProfile.MIN_RECOVERY_BUY_LIMIT, SmartProfile.MAX_RECOVERY_BUY_LIMIT
+        ),
+        recoveryRetryDelayMs = profile.recoveryRetryDelayMs.coerceIn(
+            SmartProfile.MIN_RECOVERY_RETRY_DELAY_MS, SmartProfile.MAX_RECOVERY_RETRY_DELAY_MS
+        ),
+        // A guard that no longer exists must not leave the run stuck in recovery.
+        energyGuardId = profile.energyGuardId?.takeIf { id ->
+            profile.points.take(SmartProfile.MAX_POINTS).any { it.id == id }
+        },
+        energyMode = profile.energyMode
+    )
+
+    fun sanitizeRecoveryStep(step: SmartRecoveryStep): SmartRecoveryStep = step.copy(
+        x = unit(step.x, 0.5f),
+        y = unit(step.y, 0.5f),
+        waitMs = step.waitMs.coerceIn(
+            SmartRecoveryStep.MIN_WAIT_MS, SmartRecoveryStep.MAX_WAIT_MS
+        )
     )
 
     /** Applies a speed preset. CUSTOM keeps whatever numbers are already stored. */
