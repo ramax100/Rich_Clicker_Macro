@@ -1124,7 +1124,7 @@ class MainActivity : Activity() {
     private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()
 
     companion object {
-        private const val APP_VERSION_LABEL = "0.9.5"
+        private const val APP_VERSION_LABEL = "0.9.6"
         private const val HOME_MODE_CLASSIC = 0
         private const val HOME_MODE_SMART = 1
         private const val STATE_HOME_MODE = "home_mode"

@@ -55,6 +55,9 @@ class SmartOverlayController(
     private val holders = mutableListOf<SmartHolder>()
 
     private var currentProfile: SmartProfile? = null
+    /** When the current colour capture started, so a stuck latch can be released. */
+    private var captureStartedAtMs = 0L
+    private var toolbarHiddenForCapture = false
     private var toolbar: SmartToolbarLayout? = null
     private var toolbarParams: WindowManager.LayoutParams? = null
     private var advancedContent: LinearLayout? = null
@@ -156,6 +159,7 @@ class SmartOverlayController(
         // A capture in flight loses its callbacks above; clear the latch so the
         // editor does not come back with permanently disabled buttons.
         capturingColor = false
+        toolbarHiddenForCapture = false
         removePicker()
         toolbar?.visibility = View.VISIBLE
         if (wasRunning) service.cancelActiveAction()
@@ -498,18 +502,40 @@ class SmartOverlayController(
 
     // ------------------------------------------------------------ colour capture
 
-    private fun captureColor() {
-        if (isRunning() || capturingColor) return
-        val holder = holders.getOrNull(selectedIndex) ?: run {
-            toast("Tambahkan titik smart dulu.")
+    /**
+     * Reads the colour at one point and stores it.
+     *
+     * @param pointId the point the user opened the settings for. Resolving by id
+     * instead of by the current selection means a changed selection during the
+     * dialog can never recapture the wrong point.
+     */
+    private fun captureColor(pointId: Long? = null) {
+        if (isRunning()) {
+            toast("Hentikan dulu smart click sebelum mengambil warna.")
             return
         }
+        if (capturingColor && !captureIsStuck()) {
+            toast("Sedang membaca layar. Tunggu sebentar.")
+            return
+        }
+        // A previous attempt whose callback never arrived must not lock the feature
+        // out forever; that made the row look like it did nothing at all.
+        capturingColor = false
+        val holder = pointId?.let { id -> holders.firstOrNull { it.id == id } }
+            ?: holders.getOrNull(selectedIndex)
+            ?: run {
+                toast("Tambahkan titik smart dulu.")
+                return
+            }
         sampler.capabilityProblem()?.let {
             toast(it)
             return
         }
         syncFromViews(holder)
-        val frame = runCatching { screenFrame() }.getOrNull() ?: return
+        val frame = runCatching { screenFrame() }.getOrNull() ?: run {
+            toast("Ukuran layar tidak terbaca. Tutup lalu buka lagi editor smart.")
+            return
+        }
         val toolbarBox = toolbarNormalizedBox()
         if (toolbarBox != null && SmartGeometry.isPatchObscured(
                 SmartGeometry.patchBox(holder.watchX, holder.watchY, PATCH_RADIUS_NORMALIZED),
@@ -520,30 +546,53 @@ class SmartOverlayController(
             return
         }
         capturingColor = true
+        captureStartedAtMs = SystemClock.uptimeMillis()
         statusLabel.text = "Ambil warna…"
+        // Both our markers and our toolbar are our own windows, and a screenshot
+        // contains them. Hiding only the markers left the toolbar free to be read.
         setMarkersVisible(false)
-        // Give the window manager a frame to actually remove our markers from the
-        // composition before the screenshot is taken.
+        toolbarHiddenForCapture = toolbar?.visibility == View.VISIBLE
+        if (toolbarHiddenForCapture) toolbar?.visibility = View.INVISIBLE
+        // The settings dialog animates out for a couple of hundred milliseconds.
+        // Sampling before it is gone photographed the dialog, which is why this
+        // feature appeared to do nothing: it stored a real colour of the wrong thing.
         handler.postDelayed({
-            requestCapture(holder, toolbarBox, attempt = 0)
-        }, MARKER_HIDE_SETTLE_MS)
-        // The screenshot itself is paced; make sure a pending capture is not lost.
+            requestCapture(holder, toolbarBox, attempt = 0, firstReading = null)
+        }, CAPTURE_SETTLE_MS)
         handler.postDelayed({
             if (capturingColor) {
-                capturingColor = false
-                setMarkersVisible(true)
-                updateUi()
+                endCapture()
                 toast("Pengambilan warna terlalu lama. Coba lagi.")
             }
-        }, MARKER_HIDE_SETTLE_MS + ScreenSampler.SCREENSHOT_TIMEOUT_MS + 500L)
+        }, CAPTURE_SETTLE_MS + ScreenSampler.SCREENSHOT_TIMEOUT_MS + 800L)
         MacroDiagnostics.record(service, "smart_capture_requested", "frame=${frame.width}x${frame.height}")
+    }
+
+    /** A capture that has been "in progress" for too long is treated as lost. */
+    private fun captureIsStuck(): Boolean =
+        capturingColor && SystemClock.uptimeMillis() - captureStartedAtMs > CAPTURE_STUCK_MS
+
+    private fun endCapture() {
+        capturingColor = false
+        setMarkersVisible(true)
+        if (toolbarHiddenForCapture) toolbar?.visibility = View.VISIBLE
+        toolbarHiddenForCapture = false
     }
 
     /**
      * The platform paces screenshots. A capture that lands inside the cooldown is
      * retried instead of surfacing an internal "paced" string to the user.
+     *
+     * The first successful reading is only a candidate: a second reading of the same
+     * patch must agree before it is stored, so a moving screen can never be saved as
+     * the target colour.
      */
-    private fun requestCapture(holder: SmartHolder, toolbarBox: SmartGeometry.Box?, attempt: Int) {
+    private fun requestCapture(
+        holder: SmartHolder,
+        toolbarBox: SmartGeometry.Box?,
+        attempt: Int,
+        firstReading: Int?
+    ) {
         if (!capturingColor) return
         sampler.sample(
             mapOf(holder.id to (holder.watchX to holder.watchY)),
@@ -552,15 +601,14 @@ class SmartOverlayController(
             if (!capturingColor) return@sample
             if (result == null && (error == "paced" || error == "busy") && attempt < CAPTURE_MAX_RETRIES) {
                 handler.postDelayed(
-                    { requestCapture(holder, toolbarBox, attempt + 1) },
+                    { requestCapture(holder, toolbarBox, attempt + 1, firstReading) },
                     ScreenSampler.MIN_REQUEST_GAP_MS
                 )
                 return@sample
             }
-            capturingColor = false
-            setMarkersVisible(true)
             val color = result?.get(holder.id)
             if (color == null) {
+                endCapture()
                 statusLabel.text = "Gagal"
                 MacroDiagnostics.record(service, "smart_capture_failed", error ?: "null_patch")
                 toast(
@@ -573,12 +621,31 @@ class SmartOverlayController(
                 updateUi()
                 return@sample
             }
+            if (firstReading == null) {
+                // Confirm the reading before trusting it.
+                handler.postDelayed(
+                    { requestCapture(holder, toolbarBox, 0, color) },
+                    ScreenSampler.MIN_REQUEST_GAP_MS
+                )
+                return@sample
+            }
+            endCapture()
+            if (!ColorCapture.readingsAgree(firstReading, color, holder.point.tolerance)) {
+                MacroDiagnostics.record(
+                    service, "smart_capture_unstable",
+                    "${ColorMatcher.toHex(firstReading)}->${ColorMatcher.toHex(color)}"
+                )
+                statusLabel.text = "Warna tidak stabil"
+                toast(ColorCapture.unstableMessage(firstReading, color))
+                updateUi()
+                return@sample
+            }
             holder.point = holder.point.copy(targetColor = color, colorCaptured = true)
             holder.watchView.sampledColor = color
             persist()
             updateUi()
             MacroDiagnostics.record(service, "smart_color_captured", ColorMatcher.toHex(color))
-            toast("Warna tersimpan: ${ColorMatcher.toHex(color)}")
+            toast("Warna ${holder.point.label} tersimpan: ${ColorMatcher.toHex(color)}")
         }
     }
 
@@ -756,6 +823,27 @@ class SmartOverlayController(
     private fun dismissDialog() {
         activeDialog?.let { runCatching { it.dismiss() } }
         activeDialog = null
+    }
+
+    /**
+     * Closes the dialog and runs [action] only once its window is really gone.
+     *
+     * Calling dismiss() and then immediately taking a screenshot captured the dialog
+     * itself while it was still fading out. Anything that reads the screen must go
+     * through here, not through dismiss() followed by a capture.
+     */
+    private fun dismissDialogThen(action: () -> Unit) {
+        val dialog = activeDialog
+        if (dialog == null) {
+            action()
+            return
+        }
+        activeDialog = null
+        dialog.setOnDismissListener { action() }
+        runCatching { dialog.dismiss() }.onFailure {
+            dialog.setOnDismissListener(null)
+            action()
+        }
     }
 
     // ---------------------------------------------------------------- toolbar
@@ -1113,7 +1201,7 @@ class SmartOverlayController(
         persist()
         updateUi()
         // Read the colour straight away so the user never has to find a separate button.
-        captureColor()
+        captureColor(point.id)
     }
 
     // ------------------------------------------------------- repeat / order / loop
@@ -1238,7 +1326,11 @@ class SmartOverlayController(
             "Ambil warna ulang",
             if (point.colorCaptured) ColorMatcher.toHex(point.targetColor) else "belum diambil",
             "Baca ulang warna di titik ini dari layar sekarang. Lakukan saat tombolnya sedang siap."
-        ) { dismissDialog(); captureColor() }
+        ) {
+            // Capture only after the dialog window has left the screen, and pin the
+            // point so a changed selection cannot recapture a different one.
+            dismissDialogThen { captureColor(point.id) }
+        }
 
         rows += optionRow(
             "Berapa kali diklik", "${point.repeatCount}×",
@@ -2011,6 +2103,15 @@ class SmartOverlayController(
         private const val TOOLBAR_WIDTH_DP = 224f
         private const val MARKER_SIZE_DP = 44f
         private const val MARKER_HIDE_SETTLE_MS = 150L
+
+        /**
+         * Time given to our own windows to leave the screen before the screenshot.
+         * The settings dialog animates out; 250 ms covers it plus a frame.
+         */
+        private const val CAPTURE_SETTLE_MS = 250L
+
+        /** A capture still flagged after this long never got its callback. */
+        private const val CAPTURE_STUCK_MS = 6_000L
         private const val CAPTURE_MAX_RETRIES = 4
         private const val MAX_UNREADABLE_SCANS = 6
 
