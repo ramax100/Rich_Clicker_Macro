@@ -84,6 +84,10 @@ class SmartOverlayController(
     private var runFrame: ScreenFrame? = null
     private var expectedPackage: String? = null
     private var capturingColor = false
+    /** Picker sedang dipakai untuk menaruh titik Jalur 2, bukan titik smart biasa. */
+    private var pickForPath2 = false
+    /** Panel Jalur 2 dibuka lagi setelah penandaan selesai. */
+    private var reopenPath2AfterPick = false
     private var activeDialog: AlertDialog? = null
     private var disposing = false
     private var lastNotice = ""
@@ -626,16 +630,35 @@ class SmartOverlayController(
 
     private fun addNewPath2Marker() {
         if (isRunning() || capturingColor || pickerView != null) return
-        val index = path2Markers.size
-        val nx = (0.18 + ((index * 0.61803398875) % 0.62)).toFloat().coerceIn(0.08f, 0.92f)
-        val ny = (0.24 + ((index * 0.38196601125) % 0.54)).toFloat().coerceIn(0.1f, 0.9f)
-        val point = Path2Point(id = System.nanoTime(), normalizedX = nx, normalizedY = ny)
-        if (addPath2Marker(point)) {
-            relabelPath2()
-            savePath2()
-            updateUi()
-            toast("Titik Jalur 2 ditambahkan. Geser ke posisi, lalu tekan \"Ambil Warna J2\".")
+        // Sama seperti titik smart biasa: titik diletakkan dengan mengetuk layar.
+        // Menaruhnya otomatis di koordinat tetap membuat marker sering berada di
+        // bawah toolbar sendiri, sehingga tidak terlihat dan warnanya tak terbaca.
+        startPick(forPath2 = true)
+    }
+
+    /** Dipanggil setelah pengguna mengetuk layar untuk titik Jalur 2. */
+    private fun restorePath2PanelAfterPick() {
+        if (!reopenPath2AfterPick) return
+        reopenPath2AfterPick = false
+        if (::path2Panel.isInitialized && !isRunning()) {
+            isPath2Open = true
+            path2Panel.visibility = View.VISIBLE
+            toolbar?.post { clampToolbar() }
         }
+    }
+
+    private fun placePickedPath2Point(nx: Float, ny: Float) {
+        val point = Path2Point(id = System.nanoTime(), normalizedX = nx, normalizedY = ny)
+        if (!addPath2Marker(point)) {
+            updateUi()
+            return
+        }
+        relabelPath2()
+        savePath2()
+        updateUi()
+        // Langsung baca warna di titik itu supaya tidak ada langkah yang terlewat.
+        capturePath2Color()
+        restorePath2PanelAfterPick()
     }
 
     private fun removeSelectedPath2Marker() {
@@ -801,8 +824,16 @@ class SmartOverlayController(
         if (!::path2StatusLabel.isInitialized) return
         if (!isPath2Open || isCollapsed) return
         val ready = path2Markers.count { it.point.isReady }
+        val problem = runCatching { sampler.capabilityProblem() }.getOrNull()
         val text = when {
-            !path2Config.enabled -> "Jalur 2 mati • $ready/${path2Markers.size} titik siap"
+            // Tanpa izin baca layar, warna tidak mungkin terbaca — sebutkan sebabnya
+            // supaya panel tidak terlihat "mati" tanpa alasan.
+            problem != null && ready == 0 -> "Jalur 2 belum bisa baca layar • izin baca mati"
+            !path2Config.enabled && path2Markers.isNotEmpty() && ready == 0 ->
+                "Jalur 2 nonaktif • ambil warna dulu (0/${path2Markers.size} siap)"
+            !path2Config.enabled && path2Markers.isEmpty() ->
+                "Jalur 2 nonaktif • tekan + Titik J2 untuk mulai"
+            !path2Config.enabled -> "Jalur 2 nonaktif • $ready/${path2Markers.size} titik siap • tekan J2"
             path2Markers.isEmpty() -> "Jalur 2 aktif • titik masih kosong"
             runState == SmartRunState.PATH2 ->
                 "Jalur 2 jalan • titik ${path2Index + 1}/${path2Markers.size}"
@@ -1305,6 +1336,10 @@ class SmartOverlayController(
     private fun endCapture() {
         capturingColor = false
         setMarkersVisible(true)
+        // Titik Jalur 2 juga disembunyikan selama pembacaan warna. Dulu hanya titik
+        // smart yang dipulihkan, sehingga titik J2 hilang dari layar setelah warna
+        // diambil dan terlihat seperti "tidak ada reaksi".
+        setPath2Visible(true)
         if (toolbarHiddenForCapture) toolbar?.visibility = View.VISIBLE
         toolbarHiddenForCapture = false
     }
@@ -1942,23 +1977,38 @@ class SmartOverlayController(
      * read its colour. The picker window is removed before sampling so it cannot
      * appear in the screenshot.
      */
-    private fun startPick() {
+    private fun startPick(forPath2: Boolean = false) {
         if (isRunning() || capturingColor || pickerView != null) return
-        if (holders.size >= SmartProfile.MAX_POINTS) {
+        if (!forPath2 && holders.size >= SmartProfile.MAX_POINTS) {
             toast("Maksimal ${SmartProfile.MAX_POINTS} titik smart.")
             return
         }
-        sampler.capabilityProblem()?.let {
-            toast(it)
-            return
-        }
+        // Menaruh titik tidak butuh tangkapan layar; hanya pembacaan warnanya yang
+        // butuh. Mengunci lapisan penanda di sini membuat tombol tambah titik
+        // tampak "tidak ada reaksi" ketika izin tangkap layar belum aktif.
         val frame = runCatching { screenFrame() }.getOrNull() ?: return
+        pickForPath2 = forPath2
+        if (forPath2) {
+            // Panel Jalur 2 membuat toolbar jauh lebih tinggi, dan toolbar itu
+            // menutupi area ketuk. Ciutkan dulu supaya pengguna bisa menandai
+            // hampir di mana saja, lalu buka lagi setelah selesai.
+            reopenPath2AfterPick = isPath2Open
+            if (isPath2Open) {
+                isPath2Open = false
+                path2Panel.visibility = View.GONE
+                toolbar?.post { clampToolbar() }
+            }
+        }
         val root = SmartPickerLayout(service).apply {
             setBackgroundColor(Color.argb(90, 0, 0, 0))
             contentDescription = "Ketuk layar untuk menandai titik smart"
         }
         val banner = TextView(service).apply {
-            text = "Ketuk bagian layar yang mau DIKLIK"
+            text = if (forPath2) {
+                "Ketuk bagian layar untuk titik JALUR 2"
+            } else {
+                "Ketuk bagian layar yang mau DIKLIK"
+            }
             textSize = 13f
             setTextColor(Color.WHITE)
             gravity = Gravity.CENTER
@@ -2006,6 +2056,8 @@ class SmartOverlayController(
 
     private fun cancelPick() {
         removePicker()
+        pickForPath2 = false
+        restorePath2PanelAfterPick()
         toolbar?.visibility = View.VISIBLE
         updateUi()
     }
@@ -2020,8 +2072,21 @@ class SmartOverlayController(
         toolbar?.visibility = View.VISIBLE
         val box = toolbarNormalizedBox()
         if (box != null && SmartGeometry.isPatchObscured(SmartGeometry.patchBox(nx, ny, PATCH_RADIUS_NORMALIZED), listOf(box))) {
-            toast("Posisi itu tertutup toolbar. Geser toolbar dulu, lalu coba lagi.")
+            val message = "Posisi itu tertutup toolbar. Geser toolbar dulu, lalu coba lagi."
+            if (pickForPath2) {
+                pickForPath2 = false
+                toast(message)
+                updateUi()
+                restorePath2PanelAfterPick()
+                return
+            }
+            toast(message)
             updateUi()
+            return
+        }
+        if (pickForPath2) {
+            pickForPath2 = false
+            placePickedPath2Point(nx, ny)
             return
         }
         val index = holders.size
@@ -2738,6 +2803,11 @@ class SmartOverlayController(
         val location = IntArray(2)
         view.getLocationOnScreen(location)
         val frame = screenFrame()
+        // Bingkai layar yang tidak masuk akal (mis. 1x1 saat metrik belum siap) akan
+        // membuat kotak toolbar menutupi SELURUH layar, sehingga setiap ketukan
+        // ditolak dengan pesan "tertutup toolbar". Lebih baik tidak memeriksa
+        // daripada menolak semua titik.
+        if (frame.width <= 1 || frame.height <= 1) return null
         return SmartGeometry.Box(
             SmartGeometry.normalize(location[0].toFloat(), frame.left, frame.width),
             SmartGeometry.normalize(location[1].toFloat(), frame.top, frame.height),

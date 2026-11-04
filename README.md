@@ -3,7 +3,7 @@
   <h1>Rich Clicker Macro</h1>
   <p>Auto clicker dan editor macro multi-aksi untuk Android.</p>
 
-  [![Version](https://img.shields.io/badge/version-0.9.12-4f46e5)](https://github.com/ramax100/Rich_Clicker_Macro/releases/latest)
+  [![Version](https://img.shields.io/badge/version-0.9.13-4f46e5)](https://github.com/ramax100/Rich_Clicker_Macro/releases/latest)
   [![Android](https://img.shields.io/badge/Android-8.0%2B-3DDC84?logo=android)](#persyaratan)
   [![License](https://img.shields.io/badge/license-MIT-blue)](./LICENSE)
   [![Free](https://img.shields.io/badge/price-100%25%20gratis-brightgreen)](#gratis-dan-bebas-dimodifikasi)
@@ -66,13 +66,13 @@ Unduh APK terbaru dari halaman **[GitHub Releases](https://github.com/ramax100/R
 
 Setiap rilis menyertakan dua berkas:
 
-- `Rich-Clicker-Macro-v0.9.12-com.richclickermacro-release.apk` — aplikasinya.
+- `Rich-Clicker-Macro-v0.9.13-com.richclickermacro-release.apk` — aplikasinya.
 - `...apk.sha256` — sidik jari untuk memeriksa unduhan tidak rusak.
 
 Cara memeriksa (opsional, tapi disarankan):
 
 ```bash
-sha256sum Rich-Clicker-Macro-v0.9.12-com.richclickermacro-release.apk
+sha256sum Rich-Clicker-Macro-v0.9.13-com.richclickermacro-release.apk
 ```
 
 Bandingkan hasilnya dengan isi berkas `.sha256`. Kalau berbeda, unduhan tidak utuh —
@@ -169,10 +169,19 @@ sendiri di toolbar-nya.
   seperti titik smart biasa. Setelah marker digeser ke posisi yang diinginkan, tekan
   **`Ambil Warna J2`**; warna di titik itu dibaca dua kali, dicocokkan, lalu disimpan. Marker
   Jalur 2 tanpa warna tampil abu-abu dan dilewati saat dijalankan.
-- **`+ Titik J2`** menambah titik Jalur 2 **tanpa batas jumlah**. Marker Jalur 2 berwarna
-  **oranye** dengan label `J1`, `J2`, … dan titik kecil di bawahnya menunjukkan warna yang
-  tersimpan. Geser marker untuk menentukan posisi; ketuk lalu `− Titik J2` untuk menghapus.
-  Kalau marker digeser, warna lama otomatis dibuang dan perlu diambil ulang.
+- **`+ Titik J2`** menambah titik Jalur 2 **tanpa batas jumlah**, dan titiknya diletakkan
+  dengan **mengetuk layar** — persis seperti titik smart biasa. Setelah tombol ditekan, panel
+  Jalur 2 menyingkir dulu, muncul tulisan *"Ketuk bagian layar untuk titik JALUR 2"*, lalu
+  ketuk posisi yang diinginkan di layar game. Titik jadi di posisi itu dan warna pixel-nya
+  langsung dibaca otomatis.
+  - Kenapa mengetuk layar: dulu titik diletakkan otomatis di satu koordinat tetap, sehingga
+    sering jatuh di bawah toolbar sendiri — marker tidak terlihat dan warnanya gagal dibaca.
+    Dengan mengetuk, titik selalu berada di tempat yang benar-benar Anda pilih.
+  - Tempat yang tertutup toolbar sendiri ditolak dengan pesan jelas (warnanya akan terbaca
+    sebagai warna toolbar, bukan warna game). Geser toolbar, lalu ketuk lagi.
+  - Marker Jalur 2 berwarna **oranye** dengan label `J1`, `J2`, … dan titik kecil di bawahnya
+    menunjukkan warna yang tersimpan. Geser marker untuk memindahkan; ketuk lalu `− Titik J2`
+    untuk menghapus. Kalau marker digeser, warna lama otomatis dibuang dan perlu diambil ulang.
 - Tiap titik Jalur 2 adalah satu jendela overlay. Saat jumlahnya mencapai 20, aplikasi
   mengingatkan agar RAM tidak penuh — pengingat itu tidak menghalangi penambahan titik.
 - Titik Jalur 2 dijalankan berurutan **titik 1 → titik terakhir, satu kali**. Tiap titik
@@ -180,8 +189,13 @@ sendiri di toolbar-nya.
   muncul, titik itu dilewati agar rangkaian tidak macet.
 - Per titik Jalur 2 ada pengaturan sendiri: **Kepekaan** (1–120), **Ketuk/Tahan**, dan **×ulangan**
   (1–1.000 klik setiap kali warnanya cocok).
-- Menambah titik pertama otomatis mengaktifkan Jalur 2. Tombol **`J2 mati`/`J2 aktif`**
-  mematikannya kembali tanpa menghapus titik.
+- Mengambil warna pertama yang berhasil otomatis mengaktifkan Jalur 2 (tombol berubah jadi
+  **`J2 aktif`**). Tombol itu bisa mematikannya kembali tanpa menghapus titik.
+- Label status di bawah panel selalu menyebut langkah berikutnya, misalnya
+  *"Jalur 2 nonaktif • tekan + Titik J2 untuk mulai"*,
+  *"Jalur 2 nonaktif • ambil warna dulu (0/1 siap)"*, atau
+  *"Jalur 2 belum bisa baca layar • izin baca mati"* bila izin baca layar belum aktif.
+  Jadi kalau ada yang belum siap, penyebabnya tertulis di situ — bukan cuma "mati".
 
 **Alur saat waktu habis**
 
