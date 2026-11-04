@@ -3,7 +3,7 @@
   <h1>Rich Clicker Macro</h1>
   <p>Auto clicker dan editor macro multi-aksi untuk Android.</p>
 
-  [![Version](https://img.shields.io/badge/version-0.9.11-4f46e5)](https://github.com/ramax100/Rich_Clicker_Macro/releases/latest)
+  [![Version](https://img.shields.io/badge/version-0.9.12-4f46e5)](https://github.com/ramax100/Rich_Clicker_Macro/releases/latest)
   [![Android](https://img.shields.io/badge/Android-8.0%2B-3DDC84?logo=android)](#persyaratan)
   [![License](https://img.shields.io/badge/license-MIT-blue)](./LICENSE)
   [![Free](https://img.shields.io/badge/price-100%25%20gratis-brightgreen)](#gratis-dan-bebas-dimodifikasi)
@@ -54,7 +54,7 @@ Hanya **satu** mode boleh berjalan pada satu waktu.
 |---|---|---|
 | Kapan mengklik | Sesuai jeda waktu yang Anda atur | Sesuai kondisi warna di layar |
 | Titik | Tanpa batas dari aplikasi | Maksimal 10 titik |
-| Titik Jalur 2 | Tanpa batas | Tanpa batas (konfigurasi sama) |
+| Titik Jalur 2 | Tidak dipakai | Tanpa batas, tiap titik baca warna pixel |
 | Jenis aksi | Tap, tahan, geser (swipe) | Tap, tahan |
 | Android | 8.0+ (API 26) | **11+ (API 30)** |
 | Baca layar | Tidak pernah | Hanya warna di titik pilihan |
@@ -66,13 +66,13 @@ Unduh APK terbaru dari halaman **[GitHub Releases](https://github.com/ramax100/R
 
 Setiap rilis menyertakan dua berkas:
 
-- `Rich-Clicker-Macro-v0.9.11-com.richclickermacro-release.apk` — aplikasinya.
+- `Rich-Clicker-Macro-v0.9.12-com.richclickermacro-release.apk` — aplikasinya.
 - `...apk.sha256` — sidik jari untuk memeriksa unduhan tidak rusak.
 
 Cara memeriksa (opsional, tapi disarankan):
 
 ```bash
-sha256sum Rich-Clicker-Macro-v0.9.11-com.richclickermacro-release.apk
+sha256sum Rich-Clicker-Macro-v0.9.12-com.richclickermacro-release.apk
 ```
 
 Bandingkan hasilnya dengan isi berkas `.sha256`. Kalau berbeda, unduhan tidak utuh —
@@ -154,24 +154,32 @@ Panduan lengkap tiap menu ada di bagian [Semua fitur](#semua-fitur).
 
 ### Jalur 2
 
-Jalur 2 adalah **rangkaian titik kedua** yang dipicu waktu. Fitur ini ada di **kedua mode**:
-Macro Biasa dan Multi Smart Click. Konfigurasinya **dipakai bersama**, jadi titik Jalur 2 cukup
-diatur sekali dan berlaku di kedua mode — tombol `J2` ada di toolbar masing-masing mode.
+Jalur 2 adalah **rangkaian titik kedua khusus mode Multi Smart Click**, dibuka lewat tombol `J2`
+di toolbar smart. Macro Biasa tidak memakai Jalur 2 — ia sudah punya titik, jeda, dan ulangan
+sendiri di toolbar-nya.
 
-- Dibuka lewat tombol **`J2`** di toolbar (ada di toolbar Macro Biasa maupun Multi Smart Click).
-  Panelnya hanya muncul saat dibuka, jadi toolbar tetap kecil.
+- Dibuka lewat tombol **`J2`** di toolbar Multi Smart Click. Panelnya hanya muncul saat dibuka,
+  jadi toolbar tetap kecil.
 - **Waktu** diatur di panel Jalur 2, dalam **menit** (1–720), lewat tombol `−`/`+` atau ketuk
   angka menitnya untuk mengetik langsung.
 - **Yang dihitung adalah lama macro biasa (Jalur 1) berjalan**, bukan lama ia berhenti dan
   bukan lama Jalur 2 bekerja. Saat hitung mundur, saat STOP, dan selama Jalur 2 berjalan,
   hitungan waktu ikut berhenti.
+- **Warna pixel menentukan klik.** Tiap titik Jalur 2 membaca warna di titiknya sendiri, sama
+  seperti titik smart biasa. Setelah marker digeser ke posisi yang diinginkan, tekan
+  **`Ambil Warna J2`**; warna di titik itu dibaca dua kali, dicocokkan, lalu disimpan. Marker
+  Jalur 2 tanpa warna tampil abu-abu dan dilewati saat dijalankan.
 - **`+ Titik J2`** menambah titik Jalur 2 **tanpa batas jumlah**. Marker Jalur 2 berwarna
-  **oranye** dengan label `J1`, `J2`, … supaya tidak tertukar dengan marker macro biasa yang
-  berwarna merah. Geser marker untuk menentukan posisi; ketuk lalu `− Titik J2` untuk menghapus.
+  **oranye** dengan label `J1`, `J2`, … dan titik kecil di bawahnya menunjukkan warna yang
+  tersimpan. Geser marker untuk menentukan posisi; ketuk lalu `− Titik J2` untuk menghapus.
+  Kalau marker digeser, warna lama otomatis dibuang dan perlu diambil ulang.
 - Tiap titik Jalur 2 adalah satu jendela overlay. Saat jumlahnya mencapai 20, aplikasi
   mengingatkan agar RAM tidak penuh — pengingat itu tidak menghalangi penambahan titik.
-- Titik Jalur 2 dijalankan berurutan **titik 1 → titik terakhir, satu kali**, memakai jeda
-  default profil di antara titik.
+- Titik Jalur 2 dijalankan berurutan **titik 1 → titik terakhir, satu kali**. Tiap titik
+  **menunggu warnanya cocok** dulu sebelum diklik; kalau dalam 20 detik warnanya tidak pernah
+  muncul, titik itu dilewati agar rangkaian tidak macet.
+- Per titik Jalur 2 ada pengaturan sendiri: **Kepekaan** (1–120), **Ketuk/Tahan**, dan **×ulangan**
+  (1–1.000 klik setiap kali warnanya cocok).
 - Menambah titik pertama otomatis mengaktifkan Jalur 2. Tombol **`J2 mati`/`J2 aktif`**
   mematikannya kembali tanpa menghapus titik.
 
@@ -185,11 +193,12 @@ diatur sekali dan berlaku di kedua mode — tombol `J2` ada di toolbar masing-ma
 
 **Di Multi Smart Click**
 
-- Hitungan waktu memakai lama **smart click berjalan**. Smart click berhenti dulu, Jalur 2
-  dijalankan titik 1 → terakhir, lalu smart click lanjut lagi dan waktunya mulai dari nol.
-- Selama smart click berjalan, marker Jalur 2 ikut disembunyikan agar tidak muncul di tangkapan
-  layar; kalau ada titik Jalur 2 yang tertutup toolbar, smart click menolak mulai dengan pesan
-  jelas.
+- Hitungan waktu memakai lama **smart click berjalan**. Saat waktu habis, smart click berhenti,
+  Jalur 2 dijalankan (tiap titik menunggu warna pixel cocok), lalu smart click lanjut lagi dan
+  hitungan waktunya mulai dari nol.
+- Selama smart click maupun Jalur 2 berjalan, semua marker disembunyikan agar tidak ikut
+  terekam tangkapan layar; kalau ada titik Jalur 2 yang tertutup toolbar, smart click menolak
+  mulai dengan pesan jelas.
 
 Pengaturan dan titik Jalur 2 disimpan terpisah dari profil macro maupun profil smart, berlaku
 untuk semua profil, dan **tidak mengubah format Export/Import JSON** kedua mode.

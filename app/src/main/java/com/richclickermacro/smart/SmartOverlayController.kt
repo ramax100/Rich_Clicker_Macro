@@ -28,6 +28,7 @@ import android.widget.Toast
 import com.richclickermacro.accessibility.AutoClickAccessibilityService
 import com.richclickermacro.data.MacroPoint
 import com.richclickermacro.data.Path2Config
+import com.richclickermacro.data.Path2Point
 import com.richclickermacro.data.Path2Format
 import com.richclickermacro.data.Path2Schedule
 import com.richclickermacro.data.Path2Store
@@ -63,6 +64,7 @@ class SmartOverlayController(
     private val path2Schedule = Path2Schedule()
     private var path2Config = Path2Config()
     private var path2Index = 0
+    private var path2RepeatIndex = 0
     private var selectedPath2Index = -1
     private var isPath2Open = false
 
@@ -109,6 +111,10 @@ class SmartOverlayController(
     private lateinit var path2StatusLabel: TextView
     private lateinit var addPath2Button: Button
     private lateinit var removePath2Button: Button
+    private lateinit var path2ColorButton: Button
+    private lateinit var path2ToleranceButton: Button
+    private lateinit var path2HoldButton: Button
+    private lateinit var path2RepeatButton: Button
     private var pickerView: View? = null
 
     fun show(profile: SmartProfile) {
@@ -552,16 +558,14 @@ class SmartOverlayController(
     }
 
     // ------------------------------------------------------- Jalur 2 (smart)
-    // Sama seperti Jalur 2 di macro biasa: rangkaian titik kedua yang dipicu waktu.
-    // Konfigurasinya dipakai bersama dengan macro biasa, jadi titik Jalur 2 hanya
-    // perlu diatur sekali untuk kedua mode.
+    // Rangkaian titik kedua khusus mode Multi Smart Click. Dipicu waktu, lalu tiap
+    // titik menunggu warna pixel yang cocok sebelum diklik — sama seperti titik smart
+    // biasa, bukan klik buta berdasarkan waktu.
 
     private fun loadPath2() {
         removeAllPath2Markers()
         path2Config = path2Store.load()
-        path2Config.points.forEach { point ->
-            addPath2Marker(point.id, point.normalizedX, point.normalizedY, point.delayMs)
-        }
+        path2Config.points.forEach { point -> addPath2Marker(point) }
         relabelPath2()
         path2Schedule.reset()
         path2Index = 0
@@ -572,7 +576,8 @@ class SmartOverlayController(
     }
 
     private fun path2Due(): Boolean {
-        if (!path2Config.enabled || path2Markers.isEmpty()) return false
+        if (!path2Config.enabled) return false
+        if (path2Markers.none { it.point.isReady }) return false
         return path2Schedule.isDue(SystemClock.elapsedRealtime(), path2Config.intervalMs)
     }
 
@@ -581,22 +586,26 @@ class SmartOverlayController(
         path2Schedule.resume(SystemClock.elapsedRealtime())
     }
 
-    private fun addPath2Marker(id: Long, normalizedX: Float, normalizedY: Float, delayMs: Long): Boolean {
+    private fun addPath2Marker(point: Path2Point): Boolean {
+        val sanitized = Path2Point.sanitize(point)
         val view = SmartMarkerView(service).apply {
-            isWatchMarker = false
+            isWatchMarker = true
             isPath2Marker = true
             label = "J${path2Markers.size + 1}"
-            contentDescription = "Titik Jalur 2 nomor ${path2Markers.size + 1}, geser untuk memindahkan"
+            sampledColor = sanitized.targetColor
+            isDisabledPoint = !sanitized.isReady
+            contentDescription =
+                "Titik Jalur 2 nomor ${path2Markers.size + 1}, geser untuk memindahkan"
             visibility = View.VISIBLE
         }
-        val params = markerParams(normalizedX, normalizedY)
+        val params = markerParams(sanitized.normalizedX, sanitized.normalizedY)
         val holder = Path2Holder(
-            id = id,
+            id = sanitized.id,
             view = view,
             params = params,
-            normalizedX = normalizedX.coerceIn(0f, 1f),
-            normalizedY = normalizedY.coerceIn(0f, 1f),
-            delayMs = delayMs
+            normalizedX = sanitized.normalizedX,
+            normalizedY = sanitized.normalizedY,
+            point = sanitized
         )
         attachPath2Drag(holder)
         if (runCatching { windowManager.addView(view, params) }.isFailure) {
@@ -620,15 +629,12 @@ class SmartOverlayController(
         val index = path2Markers.size
         val nx = (0.18 + ((index * 0.61803398875) % 0.62)).toFloat().coerceIn(0.08f, 0.92f)
         val ny = (0.24 + ((index * 0.38196601125) % 0.54)).toFloat().coerceIn(0.1f, 0.9f)
-        if (addPath2Marker(System.nanoTime(), nx, ny, DEFAULT_PATH2_GAP_MS)) {
+        val point = Path2Point(id = System.nanoTime(), normalizedX = nx, normalizedY = ny)
+        if (addPath2Marker(point)) {
             relabelPath2()
             savePath2()
-            if (!path2Config.enabled) {
-                path2Config = path2Config.copy(enabled = true)
-                path2Store.save(path2Config)
-                toast("Jalur 2 diaktifkan otomatis.")
-            }
             updateUi()
+            toast("Titik Jalur 2 ditambahkan. Geser ke posisi, lalu tekan \"Ambil Warna J2\".")
         }
     }
 
@@ -646,12 +652,7 @@ class SmartOverlayController(
         path2Markers.removeAt(index)
         selectedPath2Index = path2Markers.lastIndex
         relabelPath2()
-        if (path2Markers.isEmpty()) {
-            path2Config = path2Config.copy(enabled = false, points = emptyList())
-            path2Store.save(path2Config)
-        } else {
-            savePath2()
-        }
+        savePath2()
         updateUi()
     }
 
@@ -659,6 +660,8 @@ class SmartOverlayController(
         path2Markers.forEachIndexed { index, holder ->
             holder.view.label = "J${index + 1}"
             holder.view.isSelectedPoint = index == selectedPath2Index
+            holder.view.sampledColor = holder.point.targetColor
+            holder.view.isDisabledPoint = !holder.point.isReady
             holder.view.contentDescription =
                 "Titik Jalur 2 nomor ${index + 1}, geser untuk memindahkan"
         }
@@ -687,6 +690,7 @@ class SmartOverlayController(
                     if (index < 0) return@setOnTouchListener false
                     selectedPath2Index = index
                     relabelPath2()
+                    updateUi()
                     initialX = holder.params.x
                     initialY = holder.params.y
                     initialTouchX = event.rawX
@@ -702,8 +706,16 @@ class SmartOverlayController(
                 }
                 MotionEvent.ACTION_UP -> {
                     holder.view.performClick()
-                    syncPath2FromView(holder)
+                    val moved = syncPath2FromView(holder)
+                    if (moved) {
+                        // Warna lama tidak lagi menggambarkan posisi yang baru.
+                        holder.point = holder.point.copy(targetColor = null)
+                        holder.view.sampledColor = null
+                        holder.view.isDisabledPoint = true
+                        toast("Posisi bergeser: ambil warna ulang untuk titik ini.")
+                    }
                     savePath2()
+                    updateUi()
                     true
                 }
                 MotionEvent.ACTION_CANCEL -> {
@@ -718,14 +730,23 @@ class SmartOverlayController(
         }
     }
 
-    private fun syncPath2FromView(holder: Path2Holder) {
+    /** @return true bila posisi berubah cukup jauh sehingga warna lama tidak berlaku. */
+    private fun syncPath2FromView(holder: Path2Holder): Boolean {
         val frame = screenFrame()
+        val previousX = holder.normalizedX
+        val previousY = holder.normalizedY
         holder.normalizedX = SmartGeometry.fromMarkerLeft(
             holder.params.x, holder.params.width, frame.left, frame.width
         )
         holder.normalizedY = SmartGeometry.fromMarkerTop(
             holder.params.y, holder.params.height, frame.top, frame.height
         )
+        holder.point = holder.point.copy(
+            normalizedX = holder.normalizedX,
+            normalizedY = holder.normalizedY
+        )
+        return kotlin.math.abs(previousX - holder.normalizedX) > POSITION_EPSILON ||
+            kotlin.math.abs(previousY - holder.normalizedY) > POSITION_EPSILON
     }
 
     private fun applyPath2Position(holder: Path2Holder) {
@@ -740,15 +761,9 @@ class SmartOverlayController(
     }
 
     private fun savePath2() {
-        path2Markers.forEach { syncPath2FromView(it) }
         val points = path2Markers.map { holder ->
-            MacroPoint(
-                id = holder.id,
-                normalizedX = holder.normalizedX,
-                normalizedY = holder.normalizedY,
-                delayMs = holder.delayMs,
-                actionType = PointActionType.TAP,
-                actionDurationMs = MacroPoint.MIN_ACTION_DURATION_MS
+            Path2Point.sanitize(
+                holder.point.copy(normalizedX = holder.normalizedX, normalizedY = holder.normalizedY)
             )
         }
         path2Config = path2Config.copy(points = points)
@@ -785,16 +800,18 @@ class SmartOverlayController(
     private fun updatePath2Status() {
         if (!::path2StatusLabel.isInitialized) return
         if (!isPath2Open || isCollapsed) return
+        val ready = path2Markers.count { it.point.isReady }
         val text = when {
-            !path2Config.enabled -> "Jalur 2 mati • ${path2Markers.size} titik"
+            !path2Config.enabled -> "Jalur 2 mati • $ready/${path2Markers.size} titik siap"
             path2Markers.isEmpty() -> "Jalur 2 aktif • titik masih kosong"
-            runState == SmartRunState.PATH2 -> "Jalur 2 jalan • ${path2Index + 1}/${path2Markers.size}"
+            runState == SmartRunState.PATH2 ->
+                "Jalur 2 jalan • titik ${path2Index + 1}/${path2Markers.size}"
             runState == SmartRunState.RUNNING ->
                 "Jalur 2 tiap ${path2Config.intervalMinutes} mnt • sisa " +
                     Path2Format.formatRemaining(
                         path2Schedule.remainingMs(SystemClock.elapsedRealtime(), path2Config.intervalMs)
                     )
-            else -> "Jalur 2 ${path2Markers.size} titik • tiap ${path2Config.intervalMinutes} mnt"
+            else -> "Jalur 2 $ready/${path2Markers.size} titik siap • tiap ${path2Config.intervalMinutes} mnt"
         }
         if (path2StatusLabel.text != text) path2StatusLabel.text = text
     }
@@ -813,6 +830,10 @@ class SmartOverlayController(
         if (isRunning()) return
         if (!path2Config.enabled && path2Markers.isEmpty()) {
             toast("Tambahkan dulu minimal satu titik Jalur 2.")
+            return
+        }
+        if (!path2Config.enabled && path2Markers.none { it.point.isReady }) {
+            toast("Ambil warna dulu untuk minimal satu titik Jalur 2.")
             return
         }
         path2Config = path2Config.copy(enabled = !path2Config.enabled)
@@ -851,36 +872,288 @@ class SmartOverlayController(
         }
     }
 
+    private fun cyclePath2Repeat() {
+        if (isRunning()) return
+        val holder = path2Markers.getOrNull(selectedPath2Index) ?: return
+        val next = if (holder.point.repeatCount >= 5) 1 else holder.point.repeatCount + 1
+        holder.point = holder.point.copy(repeatCount = next)
+        savePath2()
+        updateUi()
+    }
+
+    private fun togglePath2Hold() {
+        if (isRunning()) return
+        val holder = path2Markers.getOrNull(selectedPath2Index) ?: return
+        holder.point = holder.point.copy(
+            isHold = !holder.point.isHold,
+            holdMs = if (!holder.point.isHold) {
+                holder.point.holdMs.coerceAtLeast(Path2Point.MIN_HOLD_MS)
+            } else {
+                holder.point.holdMs
+            }
+        )
+        savePath2()
+        updateUi()
+    }
+
+    private fun editPath2Tolerance() {
+        if (isRunning()) return
+        val holder = path2Markers.getOrNull(selectedPath2Index) ?: return
+        val input = EditText(service).apply {
+            inputType = InputType.TYPE_CLASS_NUMBER
+            setText(holder.point.tolerance.toString())
+            setSelectAllOnFocus(true)
+        }
+        showNumberDialog(
+            title = "Kepekaan warna J${selectedPath2Index + 1}",
+            message = "Semakin besar, semakin mudah dianggap cocok (${Path2Point.MIN_TOLERANCE}–${Path2Point.MAX_TOLERANCE}).",
+            input = input,
+            min = Path2Point.MIN_TOLERANCE,
+            max = Path2Point.MAX_TOLERANCE
+        ) { tolerance ->
+            holder.point = holder.point.copy(tolerance = tolerance)
+            savePath2()
+            updateUi()
+        }
+    }
+
+    /** Membaca warna pixel di titik Jalur 2 terpilih, sama seperti titik smart biasa. */
+    private fun capturePath2Color() {
+        if (isRunning()) {
+            toast("Hentikan dulu smart click sebelum mengambil warna.")
+            return
+        }
+        if (capturingColor && !captureIsStuck()) {
+            toast("Sedang membaca layar. Tunggu sebentar.")
+            return
+        }
+        capturingColor = false
+        val holder = path2Markers.getOrNull(selectedPath2Index) ?: run {
+            toast("Tambahkan titik Jalur 2 dulu.")
+            return
+        }
+        sampler.capabilityProblem()?.let {
+            toast(it)
+            return
+        }
+        syncPath2FromView(holder)
+        val frame = runCatching { screenFrame() }.getOrNull() ?: run {
+            toast("Ukuran layar tidak terbaca. Tutup lalu buka lagi editor smart.")
+            return
+        }
+        val toolbarBox = toolbarNormalizedBox()
+        if (toolbarBox != null && SmartGeometry.isPatchObscured(
+                SmartGeometry.patchBox(holder.normalizedX, holder.normalizedY, PATCH_RADIUS_NORMALIZED),
+                listOf(toolbarBox)
+            )
+        ) {
+            toast("Titik Jalur 2 tertutup toolbar. Pindahkan dulu.")
+            return
+        }
+        capturingColor = true
+        captureStartedAtMs = SystemClock.uptimeMillis()
+        statusLabel.text = "Ambil warna Jalur 2…"
+        setMarkersVisible(false)
+        setPath2Visible(false)
+        toolbarHiddenForCapture = toolbar?.visibility == View.VISIBLE
+        if (toolbarHiddenForCapture) toolbar?.visibility = View.INVISIBLE
+        handler.postDelayed({
+            requestPath2Color(holder, toolbarBox, attempt = 0, firstReading = null)
+        }, CAPTURE_SETTLE_MS)
+        handler.postDelayed({
+            if (capturingColor) {
+                endCapture()
+                toast("Pengambilan warna terlalu lama. Coba lagi.")
+            }
+        }, CAPTURE_SETTLE_MS + ScreenSampler.SCREENSHOT_TIMEOUT_MS + 800L)
+        MacroDiagnostics.record(
+            service, "smart_path2_capture_requested",
+            "point=${selectedPath2Index + 1} frame=${frame.width}x${frame.height}"
+        )
+    }
+
+    private fun requestPath2Color(
+        holder: Path2Holder,
+        toolbarBox: SmartGeometry.Box?,
+        attempt: Int,
+        firstReading: Int?
+    ) {
+        if (!capturingColor) return
+        sampler.sample(
+            mapOf(holder.id to (holder.normalizedX to holder.normalizedY)),
+            listOfNotNull(toolbarBox)
+        ) { result, error ->
+            if (!capturingColor) return@sample
+            if (result == null && (error == "paced" || error == "busy") && attempt < CAPTURE_MAX_RETRIES) {
+                handler.postDelayed(
+                    { requestPath2Color(holder, toolbarBox, attempt + 1, firstReading) },
+                    ScreenSampler.MIN_REQUEST_GAP_MS
+                )
+                return@sample
+            }
+            val color = result?.get(holder.id)
+            if (color == null) {
+                endCapture()
+                MacroDiagnostics.record(service, "smart_path2_capture_failed", error ?: "null_patch")
+                toast(
+                    if (error == "paced" || error == "busy") {
+                        "Layar sedang sibuk. Coba ambil warna lagi."
+                    } else {
+                        error ?: "Warna tidak terbaca. Pastikan titik tidak tertutup toolbar."
+                    }
+                )
+                updateUi()
+                return@sample
+            }
+            if (firstReading == null) {
+                handler.postDelayed(
+                    { requestPath2Color(holder, toolbarBox, 0, color) },
+                    ScreenSampler.MIN_REQUEST_GAP_MS
+                )
+                return@sample
+            }
+            endCapture()
+            if (!ColorCapture.readingsAgree(firstReading, color, holder.point.tolerance)) {
+                MacroDiagnostics.record(
+                    service, "smart_path2_capture_unstable",
+                    "${ColorMatcher.toHex(firstReading)}->${ColorMatcher.toHex(color)}"
+                )
+                toast(ColorCapture.unstableMessage(firstReading, color))
+                updateUi()
+                return@sample
+            }
+            holder.point = holder.point.copy(targetColor = color)
+            holder.view.sampledColor = color
+            holder.view.isDisabledPoint = false
+            savePath2()
+            if (!path2Config.enabled) {
+                path2Config = path2Config.copy(enabled = true)
+                path2Store.save(path2Config)
+                toast("Warna J${selectedPath2Index + 1} tersimpan dan Jalur 2 diaktifkan.")
+            } else {
+                toast("Warna J${selectedPath2Index + 1} tersimpan: ${ColorMatcher.toHex(color)}")
+            }
+            updateUi()
+            MacroDiagnostics.record(service, "smart_path2_color_captured", ColorMatcher.toHex(color))
+        }
+    }
+
     private fun beginPath2(generation: Long) {
-        if (runState != SmartRunState.RUNNING || path2Markers.isEmpty()) return
+        if (runState != SmartRunState.RUNNING) return
+        if (path2Markers.none { it.point.isReady }) return
         handler.removeCallbacksAndMessages(null)
         path2Schedule.pause(SystemClock.elapsedRealtime())
         runState = SmartRunState.PATH2
-        path2Index = 0
+        path2Index = nextReadyPath2Index(0)
+        if (path2Index < 0) {
+            finishPath2(generation)
+            return
+        }
         MacroDiagnostics.record(
             service, "smart_jalur2_start",
             "points=${path2Markers.size} setiapMenit=${path2Config.intervalMinutes}"
         )
         updateUi()
-        handler.postDelayed({ executePath2Point(generation) }, PATH2_RESUME_GAP_MS)
+        scanPath2(generation, 0L, SystemClock.elapsedRealtime())
     }
 
-    private fun executePath2Point(generation: Long) {
+    private fun nextReadyPath2Index(from: Int): Int {
+        for (index in from until path2Markers.size) {
+            if (path2Markers[index].point.isReady) return index
+        }
+        return -1
+    }
+
+    /**
+     * Menunggu warna pixel titik Jalur 2 ini cocok, lalu mengkliknya. Bila warna
+     * tidak pernah cocok dalam batas waktu, titik dilewati agar macro tidak macet.
+     */
+    private fun scanPath2(generation: Long, initialDelayMs: Long, pointStartedAtMs: Long) {
         if (generation != runGeneration || runState != SmartRunState.PATH2) return
-        val holder = path2Markers.getOrNull(path2Index)
-        if (holder == null) {
+        val holder = path2Markers.getOrNull(path2Index) ?: run {
             finishPath2(generation)
             return
         }
+        val profile = currentProfile ?: return
         val frame = runCatching { screenFrame() }.getOrNull()
         if (frame == null || frame != runFrame) {
             stopWithNotice("Layar berubah. Smart click dihentikan.", "screen_change")
             return
         }
+        val forbidden = listOfNotNull(toolbarNormalizedBox())
+        val patch = SmartGeometry.patchBox(
+            holder.point.normalizedX, holder.point.normalizedY, PATCH_RADIUS_NORMALIZED
+        )
+        if (SmartGeometry.isPatchObscured(patch, forbidden)) {
+            stopWithNotice(
+                "Titik Jalur 2 nomor ${path2Index + 1} tertutup toolbar. Pindahkan toolbar.",
+                "path2_toolbar_overlap"
+            )
+            return
+        }
+        statusLabel.text = "Jalur 2 • J${path2Index + 1} • baca warna…"
+        sampler.sample(
+            mapOf(holder.id to (holder.point.normalizedX to holder.point.normalizedY)),
+            forbidden
+        ) { result, error ->
+            if (generation != runGeneration || runState != SmartRunState.PATH2) return@sample
+            if (result == null) {
+                if (error == "paced" || error == "busy") {
+                    handler.postDelayed(
+                        { scanPath2(generation, 0L, pointStartedAtMs) },
+                        ScreenSampler.MIN_REQUEST_GAP_MS
+                    )
+                    return@sample
+                }
+                if (sampler.failureCount() >= ScreenSampler.MAX_CONSECUTIVE_FAILURES) {
+                    stopWithNotice(
+                        error ?: "Layar tidak dapat dibaca berulang kali. Smart click dihentikan.",
+                        "path2_sample_failed"
+                    )
+                } else {
+                    handler.postDelayed(
+                        { scanPath2(generation, profile.scanIntervalMs, pointStartedAtMs) },
+                        profile.scanIntervalMs
+                    )
+                }
+                return@sample
+            }
+            val sample = result[holder.id]
+            val target = holder.point.targetColor
+            val matched = sample != null && target != null &&
+                ColorMatcher.isMatch(sample, target, holder.point.tolerance)
+            if (!matched) {
+                val waited = SystemClock.elapsedRealtime() - pointStartedAtMs
+                if (waited >= PATH2_MATCH_TIMEOUT_MS) {
+                    MacroDiagnostics.record(
+                        service, "smart_jalur2_point_timeout",
+                        "point=${path2Index + 1} waited=$waited"
+                    )
+                    advancePath2(generation)
+                    return@sample
+                }
+                handler.postDelayed(
+                    { scanPath2(generation, 0L, pointStartedAtMs) },
+                    profile.scanIntervalMs
+                )
+                return@sample
+            }
+            MacroDiagnostics.record(
+                service, "smart_jalur2_fire",
+                "point=${path2Index + 1} color=${ColorMatcher.toHex(sample ?: 0)}"
+            )
+            firePath2(holder, generation)
+        }
+    }
+
+    private fun firePath2(holder: Path2Holder, generation: Long) {
+        if (generation != runGeneration || runState != SmartRunState.PATH2) return
+        val frame = runFrame ?: return
         val (safeX, safeY) = GestureSafety.clampToFrame(
             frame, frame.centerX(holder.normalizedX), frame.centerY(holder.normalizedY)
         )
-        if (!GestureSafety.isValidGesture(safeX, safeY, safeX, safeY, PATH2_TAP_MS)) {
+        val durationMs = if (holder.point.isHold) holder.point.holdMs else PATH2_TAP_MS
+        if (!GestureSafety.isValidGesture(safeX, safeY, safeX, safeY, durationMs)) {
             stopWithNotice("Koordinat titik Jalur 2 tidak valid.", "path2_invalid_coordinate")
             return
         }
@@ -888,29 +1161,23 @@ class SmartOverlayController(
             stopWithNotice("Toolbar menutupi titik Jalur 2. Pindahkan toolbar.", "path2_toolbar_overlap")
             return
         }
-        statusLabel.text = "Jalur 2 • ${path2Index + 1}/${path2Markers.size}"
-        path2Markers.forEach { it.view.isSelectedPoint = false }
-        holder.view.isSelectedPoint = true
-        MacroDiagnostics.record(
-            service, "smart_jalur2_fire",
-            "point=${path2Index + 1}/${path2Markers.size}"
-        )
+        statusLabel.text = "Jalur 2 • klik J${path2Index + 1}"
         val accepted = service.performAction(
-            actionType = PointActionType.TAP,
+            actionType = if (holder.point.isHold) PointActionType.LONG_PRESS else PointActionType.TAP,
             startX = safeX,
             startY = safeY,
             endX = safeX,
             endY = safeY,
-            durationMs = PATH2_TAP_MS,
+            durationMs = durationMs,
             onCompleted = {
                 if (generation == runGeneration && runState == SmartRunState.PATH2) {
-                    holder.view.isSelectedPoint = false
-                    if (path2Index >= path2Markers.lastIndex) {
-                        finishPath2(generation)
-                    } else {
-                        path2Index++
+                    if (path2RepeatIndex + 1 < holder.point.repeatCount) {
+                        path2RepeatIndex++
                         updateUi()
-                        handler.postDelayed({ executePath2Point(generation) }, holder.delayMs)
+                        handler.postDelayed({ firePath2(holder, generation) }, REPEAT_GAP_MS)
+                    } else {
+                        path2RepeatIndex = 0
+                        handler.postDelayed({ advancePath2(generation) }, holder.point.delayMs)
                     }
                 }
             },
@@ -919,7 +1186,10 @@ class SmartOverlayController(
                     MacroDiagnostics.record(
                         service, "smart_jalur2_cancelled", "point=${path2Index + 1}"
                     )
-                    stopWithNotice("Gesture Jalur 2 dibatalkan sistem. Smart click dihentikan.", "path2_cancelled")
+                    stopWithNotice(
+                        "Gesture Jalur 2 dibatalkan sistem. Smart click dihentikan.",
+                        "path2_cancelled"
+                    )
                 }
             }
         )
@@ -929,10 +1199,23 @@ class SmartOverlayController(
         }
     }
 
+    private fun advancePath2(generation: Long) {
+        if (generation != runGeneration || runState != SmartRunState.PATH2) return
+        val next = nextReadyPath2Index(path2Index + 1)
+        if (next < 0) {
+            finishPath2(generation)
+            return
+        }
+        path2Index = next
+        path2RepeatIndex = 0
+        updateUi()
+        scanPath2(generation, 0L, SystemClock.elapsedRealtime())
+    }
+
     private fun finishPath2(generation: Long) {
         if (generation != runGeneration || runState != SmartRunState.PATH2) return
-        path2Markers.forEach { it.view.isSelectedPoint = it === path2Markers.getOrNull(selectedPath2Index) }
         path2Index = 0
+        path2RepeatIndex = 0
         // Smart click lanjut; hitungan waktu Jalur 2 dimulai dari nol lagi.
         path2Schedule.reset()
         path2Schedule.resume(SystemClock.elapsedRealtime())
@@ -1436,6 +1719,31 @@ class SmartOverlayController(
         path2PointRow.addView(removePath2Button, LinearLayout.LayoutParams(0, dp(28f), 1f))
         path2Panel.addView(path2PointRow, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(28f)))
 
+        // Warna pixel: inti cara kerja Jalur 2 di mode smart.
+        path2ColorButton = smallButton("Ambil Warna J2", "Baca warna pixel di titik Jalur 2 terpilih") {
+            capturePath2Color()
+        }.apply { textSize = 11f }
+        path2Panel.addView(path2ColorButton, LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT, dp(30f)
+        ).apply { topMargin = dp(2f) })
+
+        val path2SettingRow = row()
+        path2ToleranceButton = smallButton("Kepekaan", "Atur kepekaan warna titik Jalur 2") {
+            editPath2Tolerance()
+        }.apply { textSize = 10f }
+        path2HoldButton = smallButton("Ketuk", "Ubah ketuk atau tahan untuk titik Jalur 2") {
+            togglePath2Hold()
+        }.apply { textSize = 10f }
+        path2RepeatButton = smallButton("×1", "Atur jumlah klik titik Jalur 2") {
+            cyclePath2Repeat()
+        }.apply { textSize = 10f }
+        listOf(path2ToleranceButton, path2HoldButton, path2RepeatButton).forEach {
+            path2SettingRow.addView(it, LinearLayout.LayoutParams(0, dp(28f), 1f).apply {
+                marginStart = dp(1f); marginEnd = dp(1f)
+            })
+        }
+        path2Panel.addView(path2SettingRow, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(28f)))
+
         path2StatusLabel = TextView(service).apply {
             textSize = 9f
             maxLines = 1
@@ -1558,11 +1866,29 @@ class SmartOverlayController(
         if (::path2ToggleButton.isInitialized) {
             path2ToggleButton.text = if (path2Config.enabled) "J2 aktif" else "J2 mati"
             path2MinutesButton.text = "${path2Config.intervalMinutes} mnt"
-            listOf(path2ToggleButton, path2MinutesButton, addPath2Button, removePath2Button).forEach {
+            listOf(
+                path2ToggleButton, path2MinutesButton, addPath2Button, removePath2Button,
+                path2ColorButton, path2ToleranceButton, path2HoldButton, path2RepeatButton
+            ).forEach {
                 it.isEnabled = idle && !capturingColor && pickerView == null
                 it.alpha = if (it.isEnabled) 1f else 0.4f
             }
             removePath2Button.isEnabled = removePath2Button.isEnabled && path2Markers.isNotEmpty()
+            val selectedPath2 = path2Markers.getOrNull(selectedPath2Index)
+            listOf(path2ColorButton, path2ToleranceButton, path2HoldButton, path2RepeatButton).forEach {
+                it.isEnabled = it.isEnabled && selectedPath2 != null
+                it.alpha = if (it.isEnabled) 1f else 0.4f
+            }
+            if (idle && selectedPath2 != null) {
+                path2ColorButton.text = if (selectedPath2.point.isReady) {
+                    "Ambil Warna J2 (${ColorMatcher.toHex(selectedPath2.point.targetColor ?: 0)})"
+                } else {
+                    "Ambil Warna J2"
+                }
+                path2ToleranceButton.text = "Kepekaan ${selectedPath2.point.tolerance}"
+                path2HoldButton.text = if (selectedPath2.point.isHold) "Tahan" else "Ketuk"
+                path2RepeatButton.text = "×${selectedPath2.point.repeatCount}"
+            }
             path2Button.isEnabled = idle && !capturingColor && pickerView == null
             path2Button.alpha = if (path2Button.isEnabled) 1f else 0.55f
             path2Button.text = if (path2Config.enabled) "J2✓" else "J2"
@@ -2619,7 +2945,7 @@ class SmartOverlayController(
         val params: WindowManager.LayoutParams,
         var normalizedX: Float,
         var normalizedY: Float,
-        var delayMs: Long
+        var point: Path2Point
     )
 
     private enum class SmartRunState { IDLE, COUNTDOWN, RUNNING, PATH2 }
@@ -2651,6 +2977,13 @@ class SmartOverlayController(
 
         /** Durasi sentuh tiap titik Jalur 2: ketukan singkat seperti tap pengguna. */
         private const val PATH2_TAP_MS = 40L
+
+        /**
+         * Berapa lama satu titik Jalur 2 menunggu warnanya cocok sebelum dilewati.
+         * Tanpa batas ini, satu warna yang tidak pernah muncul akan menghentikan
+         * seluruh rangkaian Jalur 2.
+         */
+        private const val PATH2_MATCH_TIMEOUT_MS = 20_000L
 
         /** Jeda bawaan antar titik Jalur 2 yang baru ditambahkan dari editor smart. */
         private const val DEFAULT_PATH2_GAP_MS = 1_000L
