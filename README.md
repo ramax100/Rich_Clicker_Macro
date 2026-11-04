@@ -3,7 +3,7 @@
   <h1>Rich Clicker Macro</h1>
   <p>Auto clicker dan editor macro multi-aksi untuk Android.</p>
 
-  [![Version](https://img.shields.io/badge/version-0.9.10-4f46e5)](https://github.com/ramax100/Rich_Clicker_Macro/releases/latest)
+  [![Version](https://img.shields.io/badge/version-0.9.11-4f46e5)](https://github.com/ramax100/Rich_Clicker_Macro/releases/latest)
   [![Android](https://img.shields.io/badge/Android-8.0%2B-3DDC84?logo=android)](#persyaratan)
   [![License](https://img.shields.io/badge/license-MIT-blue)](./LICENSE)
   [![Free](https://img.shields.io/badge/price-100%25%20gratis-brightgreen)](#gratis-dan-bebas-dimodifikasi)
@@ -54,6 +54,7 @@ Hanya **satu** mode boleh berjalan pada satu waktu.
 |---|---|---|
 | Kapan mengklik | Sesuai jeda waktu yang Anda atur | Sesuai kondisi warna di layar |
 | Titik | Tanpa batas dari aplikasi | Maksimal 10 titik |
+| Titik Jalur 2 | Tanpa batas | Tanpa batas (konfigurasi sama) |
 | Jenis aksi | Tap, tahan, geser (swipe) | Tap, tahan |
 | Android | 8.0+ (API 26) | **11+ (API 30)** |
 | Baca layar | Tidak pernah | Hanya warna di titik pilihan |
@@ -65,13 +66,13 @@ Unduh APK terbaru dari halaman **[GitHub Releases](https://github.com/ramax100/R
 
 Setiap rilis menyertakan dua berkas:
 
-- `Rich-Clicker-Macro-v0.9.10-com.richclickermacro-release.apk` — aplikasinya.
+- `Rich-Clicker-Macro-v0.9.11-com.richclickermacro-release.apk` — aplikasinya.
 - `...apk.sha256` — sidik jari untuk memeriksa unduhan tidak rusak.
 
 Cara memeriksa (opsional, tapi disarankan):
 
 ```bash
-sha256sum Rich-Clicker-Macro-v0.9.10-com.richclickermacro-release.apk
+sha256sum Rich-Clicker-Macro-v0.9.11-com.richclickermacro-release.apk
 ```
 
 Bandingkan hasilnya dengan isi berkas `.sha256`. Kalau berbeda, unduhan tidak utuh —
@@ -164,9 +165,11 @@ diatur sekali dan berlaku di kedua mode — tombol `J2` ada di toolbar masing-ma
 - **Yang dihitung adalah lama macro biasa (Jalur 1) berjalan**, bukan lama ia berhenti dan
   bukan lama Jalur 2 bekerja. Saat hitung mundur, saat STOP, dan selama Jalur 2 berjalan,
   hitungan waktu ikut berhenti.
-- **`+ Titik J2`** menambah titik Jalur 2 (maksimal 10). Marker Jalur 2 berwarna **oranye**
-  dengan label `J1`…`J10` supaya tidak tertukar dengan marker macro biasa yang berwarna
-  merah. Geser marker untuk menentukan posisi; ketuk lalu `− Titik J2` untuk menghapus.
+- **`+ Titik J2`** menambah titik Jalur 2 **tanpa batas jumlah**. Marker Jalur 2 berwarna
+  **oranye** dengan label `J1`, `J2`, … supaya tidak tertukar dengan marker macro biasa yang
+  berwarna merah. Geser marker untuk menentukan posisi; ketuk lalu `− Titik J2` untuk menghapus.
+- Tiap titik Jalur 2 adalah satu jendela overlay. Saat jumlahnya mencapai 20, aplikasi
+  mengingatkan agar RAM tidak penuh — pengingat itu tidak menghalangi penambahan titik.
 - Titik Jalur 2 dijalankan berurutan **titik 1 → titik terakhir, satu kali**, memakai jeda
   default profil di antara titik.
 - Menambah titik pertama otomatis mengaktifkan Jalur 2. Tombol **`J2 mati`/`J2 aktif`**

@@ -582,7 +582,6 @@ class SmartOverlayController(
     }
 
     private fun addPath2Marker(id: Long, normalizedX: Float, normalizedY: Float, delayMs: Long): Boolean {
-        if (path2Markers.size >= Path2Config.MAX_POINTS) return false
         val view = SmartMarkerView(service).apply {
             isWatchMarker = false
             isPath2Marker = true
@@ -606,15 +605,18 @@ class SmartOverlayController(
         }
         path2Markers.add(holder)
         selectedPath2Index = path2Markers.lastIndex
+        if (path2Markers.size == Path2Config.MANY_POINTS_WARNING) {
+            MacroDiagnostics.record(service, "smart_path2_many_points", "points=${path2Markers.size}")
+            toast(
+                "Titik Jalur 2 sudah ${Path2Config.MANY_POINTS_WARNING}. Tiap marker menambah jendela " +
+                    "grafis; tambah seperlunya agar RAM tidak penuh."
+            )
+        }
         return true
     }
 
     private fun addNewPath2Marker() {
         if (isRunning() || capturingColor || pickerView != null) return
-        if (path2Markers.size >= Path2Config.MAX_POINTS) {
-            toast("Jalur 2 maksimal ${Path2Config.MAX_POINTS} titik.")
-            return
-        }
         val index = path2Markers.size
         val nx = (0.18 + ((index * 0.61803398875) % 0.62)).toFloat().coerceIn(0.08f, 0.92f)
         val ny = (0.24 + ((index * 0.38196601125) % 0.54)).toFloat().coerceIn(0.1f, 0.9f)
@@ -1561,7 +1563,6 @@ class SmartOverlayController(
                 it.alpha = if (it.isEnabled) 1f else 0.4f
             }
             removePath2Button.isEnabled = removePath2Button.isEnabled && path2Markers.isNotEmpty()
-            addPath2Button.isEnabled = addPath2Button.isEnabled && path2Markers.size < Path2Config.MAX_POINTS
             path2Button.isEnabled = idle && !capturingColor && pickerView == null
             path2Button.alpha = if (path2Button.isEnabled) 1f else 0.55f
             path2Button.text = if (path2Config.enabled) "J2✓" else "J2"

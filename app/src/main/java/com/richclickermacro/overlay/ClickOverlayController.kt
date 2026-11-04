@@ -1147,7 +1147,7 @@ class ClickOverlayController(
             path2MinutesButton.isEnabled = idle
             path2MinutesButton.alpha = if (idle) 1f else 0.4f
             path2MinutesButton.text = "${path2Config.intervalMinutes} mnt"
-            addPath2Button.isEnabled = idle && path2Targets.size < Path2Config.MAX_POINTS
+            addPath2Button.isEnabled = idle
             addPath2Button.alpha = if (addPath2Button.isEnabled) 1f else 0.4f
             removePath2Button.isEnabled = idle && path2Targets.isNotEmpty()
             removePath2Button.alpha = if (removePath2Button.isEnabled) 1f else 0.4f
@@ -1279,10 +1279,6 @@ class ClickOverlayController(
 
     private fun addNewPath2Target() {
         if (runState != RunState.IDLE) return
-        if (path2Targets.size >= Path2Config.MAX_POINTS) {
-            Toast.makeText(service, "Jalur 2 maksimal ${Path2Config.MAX_POINTS} titik", Toast.LENGTH_SHORT).show()
-            return
-        }
         val index = path2Targets.size
         val normalizedX = (0.18 + ((index * 0.61803398875) % 0.62)).toFloat().coerceIn(0.08f, 0.92f)
         val normalizedY = (0.24 + ((index * 0.38196601125) % 0.54)).toFloat().coerceIn(0.1f, 0.9f)
@@ -1305,7 +1301,6 @@ class ClickOverlayController(
 
     private fun addPath2Target(point: MacroPoint, persist: Boolean = true): Boolean {
         if (runState != RunState.IDLE) return false
-        if (path2Targets.size >= Path2Config.MAX_POINTS) return false
 
         val target = MacroTargetView(service).apply {
             sequenceNumber = path2Targets.size + 1
@@ -1337,6 +1332,15 @@ class ClickOverlayController(
         selectedPath2Index = path2Targets.lastIndex
         relabelPath2Targets()
         if (persist) savePath2()
+        if (path2Targets.size == Path2Config.MANY_POINTS_WARNING) {
+            MacroDiagnostics.record(service, "path2_many_points_warning", "points=${path2Targets.size}")
+            Toast.makeText(
+                service,
+                "Titik Jalur 2 sudah ${Path2Config.MANY_POINTS_WARNING}. Tiap marker menambah jendela " +
+                    "grafis; tambah seperlunya agar RAM tidak penuh.",
+                Toast.LENGTH_LONG
+            ).show()
+        }
         updateControls()
         return true
     }

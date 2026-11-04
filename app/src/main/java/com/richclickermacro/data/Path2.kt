@@ -18,13 +18,16 @@ data class Path2Config(
         const val MIN_INTERVAL_MINUTES = 1
         const val MAX_INTERVAL_MINUTES = 720
         const val DEFAULT_INTERVAL_MINUTES = 10
-        const val MAX_POINTS = 10
+
+        /**
+         * Jumlah titik Jalur 2 tidak dibatasi. Android sendiri yang menjadi batas
+         * praktisnya: setiap titik adalah satu jendela overlay, dan bila sistem
+         * menolak menambah jendela, aplikasi memberi tahu lewat pesan, bukan diam.
+         */
+        const val MANY_POINTS_WARNING = 20
 
         fun sanitizeMinutes(value: Int): Int =
             value.coerceIn(MIN_INTERVAL_MINUTES, MAX_INTERVAL_MINUTES)
-
-        fun sanitizePoints(points: List<MacroPoint>): List<MacroPoint> =
-            points.take(MAX_POINTS)
     }
 }
 
@@ -85,7 +88,6 @@ object Path2Format {
         if (raw.isNullOrBlank()) return emptyList()
         return raw.split('\n').mapNotNull { line -> decodeLine(line) }
             .filter { it.normalizedX in 0f..1f && it.normalizedY in 0f..1f }
-            .take(Path2Config.MAX_POINTS)
     }
 
     private fun decodeLine(line: String): MacroPoint? {
@@ -143,7 +145,7 @@ class Path2Store(context: Context) {
         preferences.edit()
             .putBoolean(KEY_ENABLED, config.enabled)
             .putInt(KEY_INTERVAL_MINUTES, Path2Config.sanitizeMinutes(config.intervalMinutes))
-            .putString(KEY_POINTS, Path2Format.encode(Path2Config.sanitizePoints(config.points)))
+            .putString(KEY_POINTS, Path2Format.encode(config.points))
             .apply()
     }
 

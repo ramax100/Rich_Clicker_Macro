@@ -37,9 +37,21 @@ class Path2Test {
     }
 
     @Test
-    fun capsPointCount() {
-        val many = (1..25).map { samplePoint(it) }
-        assertEquals(Path2Config.MAX_POINTS, Path2Config.sanitizePoints(many).size)
+    fun keepsEveryPointWithoutCap() {
+        // Jumlah titik Jalur 2 sengaja tidak dibatasi. Koordinat dibuat tetap di
+        // dalam layar agar yang diuji benar-benar soal jumlah, bukan validasi posisi.
+        val many = (1..75).map { index ->
+            MacroPoint(
+                id = 5000L + index,
+                normalizedX = (index % 10) * 0.09f + 0.05f,
+                normalizedY = (index % 7) * 0.12f + 0.05f,
+                delayMs = 1_000L,
+                actionDurationMs = MacroPoint.MIN_ACTION_DURATION_MS
+            )
+        }
+        val roundTrip = Path2Format.decode(Path2Format.encode(many))
+        assertEquals(many.size, roundTrip.size)
+        assertEquals(many.map { it.id }, roundTrip.map { it.id })
     }
 
     @Test
@@ -78,11 +90,11 @@ class Path2Test {
     }
 
     @Test
-    fun decodeCapsAtMaxPoints() {
-        val raw = (1..20).joinToString("\n") { index ->
+    fun decodeKeepsEveryValidPoint() {
+        val raw = (1..40).joinToString("\n") { index ->
             "${index}|0.1|0.2|1000"
         }
-        assertEquals(Path2Config.MAX_POINTS, Path2Format.decode(raw).size)
+        assertEquals(40, Path2Format.decode(raw).size)
     }
 
     @Test
