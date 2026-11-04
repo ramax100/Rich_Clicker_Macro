@@ -19,8 +19,8 @@ android {
         applicationId = "com.richclickermacro"
         minSdk = 26
         targetSdk = 35
-        versionCode = 26
-        versionName = "0.9.8"
+        versionCode = 27
+        versionName = "0.9.9"
     }
 
     signingConfigs {

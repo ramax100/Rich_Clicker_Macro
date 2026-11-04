@@ -215,7 +215,11 @@ class ClickOverlayController(
                 toolbarHandle = null
             }
         }
-        removeAllPath2Targets()
+        if (!removeAllPath2Targets()) {
+            isDisposingToolbar = false
+            Toast.makeText(service, "Sebagian overlay Jalur 2 belum dapat ditutup. Coba lagi.", Toast.LENGTH_SHORT).show()
+            return
+        }
         path2Schedule.reset()
         path2Index = 0
         selectedPath2Index = -1
@@ -1245,29 +1249,32 @@ class ClickOverlayController(
     }
 
     private fun showPath2MinutesDialog() {
-        if (runState != RunState.IDLE) return
+        if (runState != RunState.IDLE || delayDialog?.isShowing == true) return
         val input = EditText(service).apply {
             inputType = InputType.TYPE_CLASS_NUMBER
             setText(path2Config.intervalMinutes.toString())
-            setSelection(text.length)
-            hint = "${Path2Config.MIN_INTERVAL_MINUTES} - ${Path2Config.MAX_INTERVAL_MINUTES}"
+            setSelectAllOnFocus(true)
         }
-        AlertDialog.Builder(service)
-            .setTitle("Waktu Jalur 2 (menit)")
-            .setMessage("Jalur 2 dijalankan setelah makro pertama berjalan selama waktu ini.")
-            .setView(input)
-            .setPositiveButton("Simpan") { _, _ ->
-                val minutes = input.text.toString().trim().toIntOrNull()
-                if (minutes == null) {
-                    Toast.makeText(service, "Masukkan angka menit", Toast.LENGTH_SHORT).show()
-                } else {
-                    path2Config = path2Config.copy(intervalMinutes = Path2Config.sanitizeMinutes(minutes))
-                    path2Store.save(path2Config)
-                    updateControls()
-                }
+        val minimum = Path2Config.MIN_INTERVAL_MINUTES
+        val maximum = Path2Config.MAX_INTERVAL_MINUTES
+        // showSettingsDialog memasang TYPE_ACCESSIBILITY_OVERLAY. Dialog dari context
+        // service tanpa tipe itu ditolak sistem (BadTokenException) di perangkat.
+        showSettingsDialog(
+            title = "Waktu Jalur 2 (menit)",
+            message = "Jalur 2 dijalankan setelah makro pertama berjalan selama $minimum–$maximum menit.",
+            input = input
+        ) {
+            val minutes = input.text.toString().trim().toIntOrNull()
+            if (minutes == null || minutes !in minimum..maximum) {
+                input.error = "Gunakan $minimum–$maximum"
+                false
+            } else {
+                path2Config = path2Config.copy(intervalMinutes = minutes)
+                path2Store.save(path2Config)
+                updateControls()
+                true
             }
-            .setNegativeButton("Batal", null)
-            .show()
+        }
     }
 
     private fun addNewPath2Target() {
@@ -1467,6 +1474,9 @@ class ClickOverlayController(
 
     private fun updatePath2Status(nowMs: Long = SystemClock.elapsedRealtime()) {
         if (!::path2StatusLabel.isInitialized) return
+        // Tidak ada yang melihat label saat panel tertutup; lewati agar tick 500 ms
+        // tidak membuat teks baru terus-menerus selama sesi berjam-jam.
+        if (!isPath2PanelOpen || isToolbarCollapsed) return
         val text = when {
             !path2Config.enabled -> "J2 mati • ${path2Targets.size} titik"
             path2Targets.isEmpty() -> "J2 aktif • titik masih kosong"

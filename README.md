@@ -3,7 +3,7 @@
   <h1>Rich Clicker Macro</h1>
   <p>Auto clicker dan editor macro multi-aksi untuk Android.</p>
 
-  [![Version](https://img.shields.io/badge/version-0.9.8-4f46e5)](https://github.com/ramax100/Rich_Clicker_Macro/releases/latest)
+  [![Version](https://img.shields.io/badge/version-0.9.9-4f46e5)](https://github.com/ramax100/Rich_Clicker_Macro/releases/latest)
   [![Android](https://img.shields.io/badge/Android-8.0%2B-3DDC84?logo=android)](#persyaratan)
   [![License](https://img.shields.io/badge/license-MIT-blue)](./LICENSE)
   [![Free](https://img.shields.io/badge/price-100%25%20gratis-brightgreen)](#gratis-dan-bebas-dimodifikasi)
@@ -65,13 +65,13 @@ Unduh APK terbaru dari halaman **[GitHub Releases](https://github.com/ramax100/R
 
 Setiap rilis menyertakan dua berkas:
 
-- `Rich-Clicker-Macro-v0.9.8-com.richclickermacro-release.apk` — aplikasinya.
+- `Rich-Clicker-Macro-v0.9.9-com.richclickermacro-release.apk` — aplikasinya.
 - `...apk.sha256` — sidik jari untuk memeriksa unduhan tidak rusak.
 
 Cara memeriksa (opsional, tapi disarankan):
 
 ```bash
-sha256sum Rich-Clicker-Macro-v0.9.8-com.richclickermacro-release.apk
+sha256sum Rich-Clicker-Macro-v0.9.9-com.richclickermacro-release.apk
 ```
 
 Bandingkan hasilnya dengan isi berkas `.sha256`. Kalau berbeda, unduhan tidak utuh —
