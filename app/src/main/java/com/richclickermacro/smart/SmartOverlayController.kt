@@ -26,6 +26,11 @@ import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
 import com.richclickermacro.accessibility.AutoClickAccessibilityService
+import com.richclickermacro.data.MacroPoint
+import com.richclickermacro.data.Path2Config
+import com.richclickermacro.data.Path2Format
+import com.richclickermacro.data.Path2Schedule
+import com.richclickermacro.data.Path2Store
 import com.richclickermacro.data.PointActionType
 import com.richclickermacro.diagnostics.MacroDiagnostics
 import com.richclickermacro.safety.GestureSafety
@@ -53,6 +58,13 @@ class SmartOverlayController(
     private val windowManager = service.getSystemService(WindowManager::class.java)
     private val handler = Handler(Looper.getMainLooper())
     private val holders = mutableListOf<SmartHolder>()
+    private val path2Markers = mutableListOf<Path2Holder>()
+    private val path2Store = Path2Store(service)
+    private val path2Schedule = Path2Schedule()
+    private var path2Config = Path2Config()
+    private var path2Index = 0
+    private var selectedPath2Index = -1
+    private var isPath2Open = false
 
     private var currentProfile: SmartProfile? = null
     /** When the current colour capture started, so a stuck latch can be released. */
@@ -90,6 +102,13 @@ class SmartOverlayController(
     private lateinit var pointSettingsButton: Button
     private lateinit var runSettingsButton: Button
     private lateinit var testClickButton: Button
+    private lateinit var path2Button: Button
+    private lateinit var path2Panel: LinearLayout
+    private lateinit var path2ToggleButton: Button
+    private lateinit var path2MinutesButton: Button
+    private lateinit var path2StatusLabel: TextView
+    private lateinit var addPath2Button: Button
+    private lateinit var removePath2Button: Button
     private var pickerView: View? = null
 
     fun show(profile: SmartProfile) {
@@ -115,8 +134,10 @@ class SmartOverlayController(
             toolbarParams = null
             advancedContent = null
         }
+        loadPath2()
         if (toolbar == null && !addToolbar()) {
             removeAllHolders()
+            removeAllPath2Markers()
             currentProfile = null
             return
         }
@@ -132,7 +153,7 @@ class SmartOverlayController(
         currentProfile != null && toolbar?.isAttachedToWindow == true
 
     fun overlayWindowCount(): Int {
-        var count = holders.size
+        var count = holders.size + path2Markers.size
         if (toolbar != null) count++
         if (pickerView != null) count++
         return count
@@ -160,12 +181,16 @@ class SmartOverlayController(
         // editor does not come back with permanently disabled buttons.
         capturingColor = false
         toolbarHiddenForCapture = false
+        path2Schedule.pause(SystemClock.elapsedRealtime())
+        path2Index = 0
         removePicker()
         toolbar?.visibility = View.VISIBLE
         if (wasRunning) service.cancelActiveAction()
         sampler.reset()
         setMarkersVisible(true)
         setMarkersTouchable(true)
+        setPath2Visible(true)
+        setPath2Touchable(true)
         applyKeepScreenOn(false)
         updateUi()
         if (wasRunning) service.stopMemorySampling()
@@ -187,6 +212,10 @@ class SmartOverlayController(
         holders.forEach { holder ->
             applyPosition(holder)
             runCatching { windowManager.updateViewLayout(holder.watchView, holder.watchParams) }
+        }
+        path2Markers.forEach { holder ->
+            applyPath2Position(holder)
+            runCatching { windowManager.updateViewLayout(holder.view, holder.params) }
         }
         toolbar?.post { clampToolbar() }
     }
@@ -221,6 +250,11 @@ class SmartOverlayController(
             toast("Sebagian overlay smart belum bisa ditutup. Coba lagi.")
             return
         }
+        if (!removeAllPath2Markers()) {
+            disposing = false
+            toast("Sebagian overlay Jalur 2 belum bisa ditutup. Coba lagi.")
+            return
+        }
         toolbar?.let { view ->
             if (removeViewSafely(view)) {
                 toolbar = null
@@ -230,6 +264,9 @@ class SmartOverlayController(
         }
         currentProfile = null
         selectedIndex = 0
+        selectedPath2Index = -1
+        isPath2Open = false
+        path2Schedule.reset()
         isAdvancedOpen = false
         isCollapsed = false
         disposing = false
@@ -280,6 +317,13 @@ class SmartOverlayController(
             toast("Titik $duplicated terlalu berdekatan dan akan membaca area yang sama.")
             return
         }
+        if (path2Config.enabled) {
+            val blockedPath2 = findPath2UnderToolbar()
+            if (blockedPath2 != null) {
+                toast("Titik Jalur 2 nomor $blockedPath2 tertutup toolbar. Pindahkan toolbar dulu.")
+                return
+            }
+        }
 
         val targetPackage = if (runnable.stopOnAppChange) {
             service.foregroundPackage() ?: run {
@@ -300,6 +344,11 @@ class SmartOverlayController(
         // Hide our markers so the screenshot contains only the target app.
         setMarkersTouchable(false)
         setMarkersVisible(false)
+        // Marker Jalur 2 juga jendela kita: harus hilang agar tidak ikut terekam.
+        setPath2Touchable(false)
+        setPath2Visible(false)
+        path2Schedule.reset()
+        path2Index = 0
         applyKeepScreenOn(runnable.keepScreenOn)
         service.startMemorySampling()
         MacroDiagnostics.record(
@@ -313,6 +362,7 @@ class SmartOverlayController(
         if (runnable.countdownSeconds > 0) {
             countdown(runnable.countdownSeconds, generation)
         } else {
+            path2ResumeClock()
             scheduleScan(generation, 0L)
         }
     }
@@ -321,6 +371,7 @@ class SmartOverlayController(
         if (runState != SmartRunState.COUNTDOWN || generation != runGeneration) return
         if (remaining <= 0) {
             runState = SmartRunState.RUNNING
+            path2ResumeClock()
             updateUi()
             scheduleScan(generation, 0L)
             return
@@ -336,6 +387,11 @@ class SmartOverlayController(
 
     private fun scan(generation: Long) {
         if (generation != runGeneration || runState != SmartRunState.RUNNING) return
+        // Jalur 2 diperiksa di detak loop smart: murni waktu, tanpa membaca warna.
+        if (path2Due()) {
+            beginPath2(generation)
+            return
+        }
         val profile = currentProfile ?: return
         val active = engine ?: return
         val frame = runCatching { screenFrame() }.getOrNull()
@@ -493,6 +549,395 @@ class SmartOverlayController(
             }
             is SmartEngine.Decision.Wait -> scheduleScan(generation, currentProfile?.scanIntervalMs ?: 450L)
         }
+    }
+
+    // ------------------------------------------------------- Jalur 2 (smart)
+    // Sama seperti Jalur 2 di macro biasa: rangkaian titik kedua yang dipicu waktu.
+    // Konfigurasinya dipakai bersama dengan macro biasa, jadi titik Jalur 2 hanya
+    // perlu diatur sekali untuk kedua mode.
+
+    private fun loadPath2() {
+        removeAllPath2Markers()
+        path2Config = path2Store.load()
+        path2Config.points.forEach { point ->
+            addPath2Marker(point.id, point.normalizedX, point.normalizedY, point.delayMs)
+        }
+        relabelPath2()
+        path2Schedule.reset()
+        path2Index = 0
+        selectedPath2Index = if (path2Markers.isEmpty()) -1 else 0
+        if (::path2Panel.isInitialized) {
+            path2Panel.visibility = if (isPath2Open) View.VISIBLE else View.GONE
+        }
+    }
+
+    private fun path2Due(): Boolean {
+        if (!path2Config.enabled || path2Markers.isEmpty()) return false
+        return path2Schedule.isDue(SystemClock.elapsedRealtime(), path2Config.intervalMs)
+    }
+
+    private fun path2ResumeClock() {
+        if (!path2Config.enabled || path2Markers.isEmpty()) return
+        path2Schedule.resume(SystemClock.elapsedRealtime())
+    }
+
+    private fun addPath2Marker(id: Long, normalizedX: Float, normalizedY: Float, delayMs: Long): Boolean {
+        if (path2Markers.size >= Path2Config.MAX_POINTS) return false
+        val view = SmartMarkerView(service).apply {
+            isWatchMarker = false
+            isPath2Marker = true
+            label = "J${path2Markers.size + 1}"
+            contentDescription = "Titik Jalur 2 nomor ${path2Markers.size + 1}, geser untuk memindahkan"
+            visibility = View.VISIBLE
+        }
+        val params = markerParams(normalizedX, normalizedY)
+        val holder = Path2Holder(
+            id = id,
+            view = view,
+            params = params,
+            normalizedX = normalizedX.coerceIn(0f, 1f),
+            normalizedY = normalizedY.coerceIn(0f, 1f),
+            delayMs = delayMs
+        )
+        attachPath2Drag(holder)
+        if (runCatching { windowManager.addView(view, params) }.isFailure) {
+            toast("Titik Jalur 2 tidak dapat ditampilkan.")
+            return false
+        }
+        path2Markers.add(holder)
+        selectedPath2Index = path2Markers.lastIndex
+        return true
+    }
+
+    private fun addNewPath2Marker() {
+        if (isRunning() || capturingColor || pickerView != null) return
+        if (path2Markers.size >= Path2Config.MAX_POINTS) {
+            toast("Jalur 2 maksimal ${Path2Config.MAX_POINTS} titik.")
+            return
+        }
+        val index = path2Markers.size
+        val nx = (0.18 + ((index * 0.61803398875) % 0.62)).toFloat().coerceIn(0.08f, 0.92f)
+        val ny = (0.24 + ((index * 0.38196601125) % 0.54)).toFloat().coerceIn(0.1f, 0.9f)
+        if (addPath2Marker(System.nanoTime(), nx, ny, DEFAULT_PATH2_GAP_MS)) {
+            relabelPath2()
+            savePath2()
+            if (!path2Config.enabled) {
+                path2Config = path2Config.copy(enabled = true)
+                path2Store.save(path2Config)
+                toast("Jalur 2 diaktifkan otomatis.")
+            }
+            updateUi()
+        }
+    }
+
+    private fun removeSelectedPath2Marker() {
+        if (isRunning() || capturingColor || pickerView != null) return
+        if (path2Markers.isEmpty()) {
+            toast("Jalur 2 belum punya titik.")
+            return
+        }
+        val index = selectedPath2Index.coerceIn(0, path2Markers.lastIndex)
+        if (!removeViewSafely(path2Markers[index].view)) {
+            toast("Titik Jalur 2 gagal dihapus. Coba tutup editor.")
+            return
+        }
+        path2Markers.removeAt(index)
+        selectedPath2Index = path2Markers.lastIndex
+        relabelPath2()
+        if (path2Markers.isEmpty()) {
+            path2Config = path2Config.copy(enabled = false, points = emptyList())
+            path2Store.save(path2Config)
+        } else {
+            savePath2()
+        }
+        updateUi()
+    }
+
+    private fun relabelPath2() {
+        path2Markers.forEachIndexed { index, holder ->
+            holder.view.label = "J${index + 1}"
+            holder.view.isSelectedPoint = index == selectedPath2Index
+            holder.view.contentDescription =
+                "Titik Jalur 2 nomor ${index + 1}, geser untuk memindahkan"
+        }
+    }
+
+    private fun removeAllPath2Markers(): Boolean {
+        var allRemoved = true
+        val iterator = path2Markers.iterator()
+        while (iterator.hasNext()) {
+            val holder = iterator.next()
+            if (removeViewSafely(holder.view)) iterator.remove() else allRemoved = false
+        }
+        selectedPath2Index = -1
+        return allRemoved
+    }
+
+    private fun attachPath2Drag(holder: Path2Holder) {
+        var initialX = 0
+        var initialY = 0
+        var initialTouchX = 0f
+        var initialTouchY = 0f
+        holder.view.setOnTouchListener { _, event ->
+            when (event.actionMasked) {
+                MotionEvent.ACTION_DOWN -> {
+                    val index = path2Markers.indexOf(holder)
+                    if (index < 0) return@setOnTouchListener false
+                    selectedPath2Index = index
+                    relabelPath2()
+                    initialX = holder.params.x
+                    initialY = holder.params.y
+                    initialTouchX = event.rawX
+                    initialTouchY = event.rawY
+                    true
+                }
+                MotionEvent.ACTION_MOVE -> {
+                    holder.params.x = initialX + (event.rawX - initialTouchX).roundToInt()
+                    holder.params.y = initialY + (event.rawY - initialTouchY).roundToInt()
+                    clampMarker(holder.params)
+                    runCatching { windowManager.updateViewLayout(holder.view, holder.params) }
+                    true
+                }
+                MotionEvent.ACTION_UP -> {
+                    holder.view.performClick()
+                    syncPath2FromView(holder)
+                    savePath2()
+                    true
+                }
+                MotionEvent.ACTION_CANCEL -> {
+                    holder.params.x = initialX
+                    holder.params.y = initialY
+                    clampMarker(holder.params)
+                    runCatching { windowManager.updateViewLayout(holder.view, holder.params) }
+                    true
+                }
+                else -> false
+            }
+        }
+    }
+
+    private fun syncPath2FromView(holder: Path2Holder) {
+        val frame = screenFrame()
+        holder.normalizedX = SmartGeometry.fromMarkerLeft(
+            holder.params.x, holder.params.width, frame.left, frame.width
+        )
+        holder.normalizedY = SmartGeometry.fromMarkerTop(
+            holder.params.y, holder.params.height, frame.top, frame.height
+        )
+    }
+
+    private fun applyPath2Position(holder: Path2Holder) {
+        val frame = screenFrame()
+        holder.params.x = SmartGeometry.markerLeft(
+            holder.normalizedX, frame.left, frame.width, holder.params.width
+        )
+        holder.params.y = SmartGeometry.markerTop(
+            holder.normalizedY, frame.top, frame.height, holder.params.height
+        )
+        clampMarker(holder.params)
+    }
+
+    private fun savePath2() {
+        path2Markers.forEach { syncPath2FromView(it) }
+        val points = path2Markers.map { holder ->
+            MacroPoint(
+                id = holder.id,
+                normalizedX = holder.normalizedX,
+                normalizedY = holder.normalizedY,
+                delayMs = holder.delayMs,
+                actionType = PointActionType.TAP,
+                actionDurationMs = MacroPoint.MIN_ACTION_DURATION_MS
+            )
+        }
+        path2Config = path2Config.copy(points = points)
+        path2Store.save(path2Config)
+        if (::path2Button.isInitialized) path2Button.text = if (path2Config.enabled) "J2✓" else "J2"
+        updatePath2Status()
+    }
+
+    private fun setPath2Visible(visible: Boolean) {
+        path2Markers.forEach { holder ->
+            holder.view.visibility = if (visible) View.VISIBLE else View.INVISIBLE
+        }
+    }
+
+    private fun setPath2Touchable(touchable: Boolean) {
+        path2Markers.forEach { holder ->
+            holder.params.flags = touchFlags(holder.params.flags, touchable)
+            holder.params.alpha = if (touchable) 1f else 0.7f
+            runCatching { windowManager.updateViewLayout(holder.view, holder.params) }
+        }
+    }
+
+    private fun findPath2UnderToolbar(): Int? {
+        for (index in path2Markers.indices) {
+            val holder = path2Markers[index]
+            val frame = runCatching { screenFrame() }.getOrNull() ?: return null
+            val x = frame.centerX(holder.normalizedX)
+            val y = frame.centerY(holder.normalizedY)
+            if (isUnderToolbar(x, y)) return index + 1
+        }
+        return null
+    }
+
+    private fun updatePath2Status() {
+        if (!::path2StatusLabel.isInitialized) return
+        if (!isPath2Open || isCollapsed) return
+        val text = when {
+            !path2Config.enabled -> "Jalur 2 mati • ${path2Markers.size} titik"
+            path2Markers.isEmpty() -> "Jalur 2 aktif • titik masih kosong"
+            runState == SmartRunState.PATH2 -> "Jalur 2 jalan • ${path2Index + 1}/${path2Markers.size}"
+            runState == SmartRunState.RUNNING ->
+                "Jalur 2 tiap ${path2Config.intervalMinutes} mnt • sisa " +
+                    Path2Format.formatRemaining(
+                        path2Schedule.remainingMs(SystemClock.elapsedRealtime(), path2Config.intervalMs)
+                    )
+            else -> "Jalur 2 ${path2Markers.size} titik • tiap ${path2Config.intervalMinutes} mnt"
+        }
+        if (path2StatusLabel.text != text) path2StatusLabel.text = text
+    }
+
+    private fun togglePath2Panel() {
+        if (isRunning()) return
+        isPath2Open = !isPath2Open
+        path2Panel.visibility = if (isPath2Open) View.VISIBLE else View.GONE
+        path2Button.text = if (path2Config.enabled) "J2✓" else "J2"
+        relabelPath2()
+        toolbar?.post { clampToolbar() }
+        updatePath2Status()
+    }
+
+    private fun togglePath2Enabled() {
+        if (isRunning()) return
+        if (!path2Config.enabled && path2Markers.isEmpty()) {
+            toast("Tambahkan dulu minimal satu titik Jalur 2.")
+            return
+        }
+        path2Config = path2Config.copy(enabled = !path2Config.enabled)
+        path2Store.save(path2Config)
+        updateUi()
+    }
+
+    private fun changePath2Minutes(delta: Int) {
+        if (isRunning()) return
+        path2Config = path2Config.copy(
+            intervalMinutes = Path2Config.sanitizeMinutes(path2Config.intervalMinutes + delta)
+        )
+        path2Store.save(path2Config)
+        updateUi()
+    }
+
+    private fun editPath2Minutes() {
+        if (isRunning()) return
+        val input = EditText(service).apply {
+            inputType = InputType.TYPE_CLASS_NUMBER
+            setText(path2Config.intervalMinutes.toString())
+            setSelection(text.length)
+        }
+        val minimum = Path2Config.MIN_INTERVAL_MINUTES
+        val maximum = Path2Config.MAX_INTERVAL_MINUTES
+        showNumberDialog(
+            title = "Waktu Jalur 2 (menit)",
+            message = "Jalur 2 dijalankan setelah smart click berjalan selama $minimum–$maximum menit.",
+            input = input,
+            min = minimum,
+            max = maximum
+        ) { minutes ->
+            path2Config = path2Config.copy(intervalMinutes = minutes)
+            path2Store.save(path2Config)
+            updateUi()
+        }
+    }
+
+    private fun beginPath2(generation: Long) {
+        if (runState != SmartRunState.RUNNING || path2Markers.isEmpty()) return
+        handler.removeCallbacksAndMessages(null)
+        path2Schedule.pause(SystemClock.elapsedRealtime())
+        runState = SmartRunState.PATH2
+        path2Index = 0
+        MacroDiagnostics.record(
+            service, "smart_jalur2_start",
+            "points=${path2Markers.size} setiapMenit=${path2Config.intervalMinutes}"
+        )
+        updateUi()
+        handler.postDelayed({ executePath2Point(generation) }, PATH2_RESUME_GAP_MS)
+    }
+
+    private fun executePath2Point(generation: Long) {
+        if (generation != runGeneration || runState != SmartRunState.PATH2) return
+        val holder = path2Markers.getOrNull(path2Index)
+        if (holder == null) {
+            finishPath2(generation)
+            return
+        }
+        val frame = runCatching { screenFrame() }.getOrNull()
+        if (frame == null || frame != runFrame) {
+            stopWithNotice("Layar berubah. Smart click dihentikan.", "screen_change")
+            return
+        }
+        val (safeX, safeY) = GestureSafety.clampToFrame(
+            frame, frame.centerX(holder.normalizedX), frame.centerY(holder.normalizedY)
+        )
+        if (!GestureSafety.isValidGesture(safeX, safeY, safeX, safeY, PATH2_TAP_MS)) {
+            stopWithNotice("Koordinat titik Jalur 2 tidak valid.", "path2_invalid_coordinate")
+            return
+        }
+        if (isUnderToolbar(safeX, safeY)) {
+            stopWithNotice("Toolbar menutupi titik Jalur 2. Pindahkan toolbar.", "path2_toolbar_overlap")
+            return
+        }
+        statusLabel.text = "Jalur 2 • ${path2Index + 1}/${path2Markers.size}"
+        path2Markers.forEach { it.view.isSelectedPoint = false }
+        holder.view.isSelectedPoint = true
+        MacroDiagnostics.record(
+            service, "smart_jalur2_fire",
+            "point=${path2Index + 1}/${path2Markers.size}"
+        )
+        val accepted = service.performAction(
+            actionType = PointActionType.TAP,
+            startX = safeX,
+            startY = safeY,
+            endX = safeX,
+            endY = safeY,
+            durationMs = PATH2_TAP_MS,
+            onCompleted = {
+                if (generation == runGeneration && runState == SmartRunState.PATH2) {
+                    holder.view.isSelectedPoint = false
+                    if (path2Index >= path2Markers.lastIndex) {
+                        finishPath2(generation)
+                    } else {
+                        path2Index++
+                        updateUi()
+                        handler.postDelayed({ executePath2Point(generation) }, holder.delayMs)
+                    }
+                }
+            },
+            onCancelled = {
+                if (generation == runGeneration && runState == SmartRunState.PATH2) {
+                    MacroDiagnostics.record(
+                        service, "smart_jalur2_cancelled", "point=${path2Index + 1}"
+                    )
+                    stopWithNotice("Gesture Jalur 2 dibatalkan sistem. Smart click dihentikan.", "path2_cancelled")
+                }
+            }
+        )
+        if (!accepted) {
+            MacroDiagnostics.record(service, "smart_jalur2_rejected", "point=${path2Index + 1}")
+            stopWithNotice("Sistem menolak gesture Jalur 2. Smart click dihentikan.", "path2_rejected")
+        }
+    }
+
+    private fun finishPath2(generation: Long) {
+        if (generation != runGeneration || runState != SmartRunState.PATH2) return
+        path2Markers.forEach { it.view.isSelectedPoint = it === path2Markers.getOrNull(selectedPath2Index) }
+        path2Index = 0
+        // Smart click lanjut; hitungan waktu Jalur 2 dimulai dari nol lagi.
+        path2Schedule.reset()
+        path2Schedule.resume(SystemClock.elapsedRealtime())
+        runState = SmartRunState.RUNNING
+        MacroDiagnostics.record(service, "smart_jalur2_finish", "")
+        updateUi()
+        scheduleScan(generation, PATH2_RESUME_GAP_MS)
     }
 
     private fun stopWithNotice(message: String, reason: String) {
@@ -922,12 +1367,16 @@ class SmartOverlayController(
         advancedButton = smallButton("⚙", "Buka atau tutup pengaturan titik") { toggleAdvanced() }.apply {
             textSize = 15f
         }
+        path2Button = smallButton("J2", "Buka atau tutup pengaturan Jalur 2") { togglePath2Panel() }.apply {
+            textSize = 11f
+        }
         selector.addView(prevButton, LinearLayout.LayoutParams(dp(26f), dp(28f)))
         selector.addView(pointLabel, LinearLayout.LayoutParams(0, dp(28f), 1f))
         selector.addView(nextButton, LinearLayout.LayoutParams(dp(26f), dp(28f)))
         selector.addView(colorSwatch, LinearLayout.LayoutParams(dp(22f), dp(22f)).apply {
             marginStart = dp(4f); marginEnd = dp(4f)
         })
+        selector.addView(path2Button, LinearLayout.LayoutParams(dp(30f), dp(28f)).apply { marginEnd = dp(2f) })
         selector.addView(advancedButton, LinearLayout.LayoutParams(dp(28f), dp(28f)))
         content.addView(selector, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(28f)).apply {
             topMargin = dp(2f)
@@ -949,6 +1398,52 @@ class SmartOverlayController(
             setTextColor(Color.rgb(203, 213, 225))
         }
         content.addView(statusLabel, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(16f)))
+
+        // Panel Jalur 2: hanya tampil saat dibuka, jadi toolbar tetap ringkas.
+        path2Panel = LinearLayout(service).apply {
+            orientation = LinearLayout.VERTICAL
+            visibility = if (isPath2Open) View.VISIBLE else View.GONE
+            setPadding(dp(2f), dp(2f), dp(2f), dp(2f))
+            background = GradientDrawable().apply {
+                setColor(Color.argb(38, 245, 158, 11)); cornerRadius = dp(6f).toFloat()
+            }
+        }
+        val path2TimeRow = row()
+        path2ToggleButton = smallButton("J2", "Aktifkan atau matikan Jalur 2") { togglePath2Enabled() }.apply {
+            textSize = 10f
+        }
+        val path2Minus = smallButton("−", "Kurangi waktu Jalur 2 satu menit") { changePath2Minutes(-1) }
+        path2MinutesButton = smallButton("10 mnt", "Ketuk untuk mengetik waktu Jalur 2") { editPath2Minutes() }.apply {
+            textSize = 10f
+        }
+        val path2Plus = smallButton("+", "Tambah waktu Jalur 2 satu menit") { changePath2Minutes(1) }
+        path2TimeRow.addView(path2ToggleButton, LinearLayout.LayoutParams(0, dp(28f), 1f))
+        path2TimeRow.addView(path2Minus, LinearLayout.LayoutParams(dp(26f), dp(28f)))
+        path2TimeRow.addView(path2MinutesButton, LinearLayout.LayoutParams(dp(52f), dp(28f)))
+        path2TimeRow.addView(path2Plus, LinearLayout.LayoutParams(dp(26f), dp(28f)))
+        path2Panel.addView(path2TimeRow, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(28f)))
+
+        val path2PointRow = row()
+        addPath2Button = smallButton("+ Titik J2", "Tambah titik Jalur 2") { addNewPath2Marker() }.apply {
+            textSize = 10f
+        }
+        removePath2Button = smallButton("− Titik J2", "Hapus titik Jalur 2 terpilih") {
+            removeSelectedPath2Marker()
+        }.apply { textSize = 10f }
+        path2PointRow.addView(addPath2Button, LinearLayout.LayoutParams(0, dp(28f), 1f).apply { marginEnd = dp(2f) })
+        path2PointRow.addView(removePath2Button, LinearLayout.LayoutParams(0, dp(28f), 1f))
+        path2Panel.addView(path2PointRow, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(28f)))
+
+        path2StatusLabel = TextView(service).apply {
+            textSize = 9f
+            maxLines = 1
+            gravity = Gravity.CENTER
+            setTextColor(Color.rgb(254, 215, 170))
+        }
+        path2Panel.addView(path2StatusLabel, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(16f)))
+        content.addView(path2Panel, LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT
+        ).apply { topMargin = dp(2f) })
 
         val advanced = LinearLayout(service).apply {
             orientation = LinearLayout.VERTICAL
@@ -1058,6 +1553,20 @@ class SmartOverlayController(
         }
         playButton.alpha = if (playButton.isEnabled) 1f else 0.4f
         stopButton.alpha = if (stopButton.isEnabled) 1f else 0.4f
+        if (::path2ToggleButton.isInitialized) {
+            path2ToggleButton.text = if (path2Config.enabled) "J2 aktif" else "J2 mati"
+            path2MinutesButton.text = "${path2Config.intervalMinutes} mnt"
+            listOf(path2ToggleButton, path2MinutesButton, addPath2Button, removePath2Button).forEach {
+                it.isEnabled = idle && !capturingColor && pickerView == null
+                it.alpha = if (it.isEnabled) 1f else 0.4f
+            }
+            removePath2Button.isEnabled = removePath2Button.isEnabled && path2Markers.isNotEmpty()
+            addPath2Button.isEnabled = addPath2Button.isEnabled && path2Markers.size < Path2Config.MAX_POINTS
+            path2Button.isEnabled = idle && !capturingColor && pickerView == null
+            path2Button.alpha = if (path2Button.isEnabled) 1f else 0.55f
+            path2Button.text = if (path2Config.enabled) "J2✓" else "J2"
+            updatePath2Status()
+        }
         val profile = currentProfile
         val holder = holders.getOrNull(selectedIndex)
         if (holder == null) {
@@ -1089,6 +1598,8 @@ class SmartOverlayController(
             val active = engine
             statusLabel.text = "Titik ${active?.sequencePosition() ?: 1}/${holders.size} • " +
                 "putaran ${(active?.loopCount ?: 0) + 1} • aksi ${active?.actionCount ?: 0}"
+        } else if (runState == SmartRunState.PATH2) {
+            statusLabel.text = "Jalur 2 • titik ${path2Index + 1}/${path2Markers.size}"
         }
         holders.forEachIndexed { index, item ->
             item.watchView.isSelectedPoint = index == selectedIndex
@@ -2097,7 +2608,20 @@ class SmartOverlayController(
         var watchY: Float
     )
 
-    private enum class SmartRunState { IDLE, COUNTDOWN, RUNNING }
+    /**
+     * Titik Jalur 2 di dalam editor smart: klik biasa tanpa pembacaan warna,
+     * sehingga hanya butuh posisi dan jeda.
+     */
+    private class Path2Holder(
+        val id: Long,
+        val view: SmartMarkerView,
+        val params: WindowManager.LayoutParams,
+        var normalizedX: Float,
+        var normalizedY: Float,
+        var delayMs: Long
+    )
+
+    private enum class SmartRunState { IDLE, COUNTDOWN, RUNNING, PATH2 }
 
     companion object {
         private const val TOOLBAR_WIDTH_DP = 224f
@@ -2120,6 +2644,15 @@ class SmartOverlayController(
          * retire the previous gesture. This is not a user-facing per-click delay.
          */
         private const val REPEAT_GAP_MS = 60L
+
+        /** Jeda sebelum smart click lanjut setelah Jalur 2 selesai. */
+        private const val PATH2_RESUME_GAP_MS = 150L
+
+        /** Durasi sentuh tiap titik Jalur 2: ketukan singkat seperti tap pengguna. */
+        private const val PATH2_TAP_MS = 40L
+
+        /** Jeda bawaan antar titik Jalur 2 yang baru ditambahkan dari editor smart. */
+        private const val DEFAULT_PATH2_GAP_MS = 1_000L
 
         /** Half patch width expressed as a fraction of a 1080p-class display. */
         private const val PATCH_RADIUS_NORMALIZED = 0.006f
@@ -2221,6 +2754,10 @@ private class SmartMarkerView(context: Context) : View(context) {
         set(value) {
             if (field != value) { field = value; invalidate() }
         }
+    var isPath2Marker: Boolean = false
+        set(value) {
+            if (field != value) { field = value; invalidate() }
+        }
 
     override fun performClick(): Boolean {
         super.performClick()
@@ -2235,6 +2772,8 @@ private class SmartMarkerView(context: Context) : View(context) {
         paint.style = Paint.Style.FILL
         paint.color = when {
             isDisabledPoint -> Color.rgb(100, 116, 139)
+            isPath2Marker && isSelectedPoint -> Color.rgb(217, 119, 6)
+            isPath2Marker -> Color.rgb(245, 158, 11)
             !isWatchMarker -> Color.rgb(14, 165, 233)
             isSelectedPoint -> Color.rgb(16, 185, 129)
             else -> Color.rgb(5, 150, 105)
@@ -2261,6 +2800,13 @@ private class SmartMarkerView(context: Context) : View(context) {
         canvas.drawLine(cx, cy - extent, cx, cy - radius, stroke)
         canvas.drawLine(cx, cy + radius, cx, cy + extent, stroke)
         val baseline = cy - (text.ascent() + text.descent()) / 2f
-        canvas.drawText(if (isWatchMarker) label else "$label•", cx, baseline, text)
+        canvas.drawText(
+            when {
+                isPath2Marker -> label
+                isWatchMarker -> label
+                else -> "$label•"
+            },
+            cx, baseline, text
+        )
     }
 }

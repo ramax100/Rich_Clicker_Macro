@@ -3,7 +3,7 @@
   <h1>Rich Clicker Macro</h1>
   <p>Auto clicker dan editor macro multi-aksi untuk Android.</p>
 
-  [![Version](https://img.shields.io/badge/version-0.9.9-4f46e5)](https://github.com/ramax100/Rich_Clicker_Macro/releases/latest)
+  [![Version](https://img.shields.io/badge/version-0.9.10-4f46e5)](https://github.com/ramax100/Rich_Clicker_Macro/releases/latest)
   [![Android](https://img.shields.io/badge/Android-8.0%2B-3DDC84?logo=android)](#persyaratan)
   [![License](https://img.shields.io/badge/license-MIT-blue)](./LICENSE)
   [![Free](https://img.shields.io/badge/price-100%25%20gratis-brightgreen)](#gratis-dan-bebas-dimodifikasi)
@@ -65,13 +65,13 @@ Unduh APK terbaru dari halaman **[GitHub Releases](https://github.com/ramax100/R
 
 Setiap rilis menyertakan dua berkas:
 
-- `Rich-Clicker-Macro-v0.9.9-com.richclickermacro-release.apk` — aplikasinya.
+- `Rich-Clicker-Macro-v0.9.10-com.richclickermacro-release.apk` — aplikasinya.
 - `...apk.sha256` — sidik jari untuk memeriksa unduhan tidak rusak.
 
 Cara memeriksa (opsional, tapi disarankan):
 
 ```bash
-sha256sum Rich-Clicker-Macro-v0.9.9-com.richclickermacro-release.apk
+sha256sum Rich-Clicker-Macro-v0.9.10-com.richclickermacro-release.apk
 ```
 
 Bandingkan hasilnya dengan isi berkas `.sha256`. Kalau berbeda, unduhan tidak utuh —
@@ -153,11 +153,12 @@ Panduan lengkap tiap menu ada di bagian [Semua fitur](#semua-fitur).
 
 ### Jalur 2
 
-Jalur 2 adalah **makro kedua di dalam macro biasa**. Macro biasa tetap berjalan seperti
-biasa; Jalur 2 hanya menyela sebentar setiap jangka waktu tertentu.
+Jalur 2 adalah **rangkaian titik kedua** yang dipicu waktu. Fitur ini ada di **kedua mode**:
+Macro Biasa dan Multi Smart Click. Konfigurasinya **dipakai bersama**, jadi titik Jalur 2 cukup
+diatur sekali dan berlaku di kedua mode — tombol `J2` ada di toolbar masing-masing mode.
 
-- Dibuka lewat tombol **`J2`** di toolbar. Panelnya hanya muncul saat dibuka, jadi toolbar
-  tetap kecil.
+- Dibuka lewat tombol **`J2`** di toolbar (ada di toolbar Macro Biasa maupun Multi Smart Click).
+  Panelnya hanya muncul saat dibuka, jadi toolbar tetap kecil.
 - **Waktu** diatur di panel Jalur 2, dalam **menit** (1–720), lewat tombol `−`/`+` atau ketuk
   angka menitnya untuk mengetik langsung.
 - **Yang dihitung adalah lama macro biasa (Jalur 1) berjalan**, bukan lama ia berhenti dan
@@ -179,8 +180,16 @@ biasa; Jalur 2 hanya menyela sebentar setiap jangka waktu tertentu.
 3. Jalur 2 dijalankan **titik 1 sampai titik terakhir, satu kali**.
 4. Macro biasa **lanjut lagi dari titik 1**, dan hitungan waktu Jalur 2 mulai dari nol lagi.
 
-Pengaturan dan titik Jalur 2 disimpan terpisah dari profil macro, berlaku untuk semua profil,
-dan **tidak mengubah format Export/Import JSON** macro biasa.
+**Di Multi Smart Click**
+
+- Hitungan waktu memakai lama **smart click berjalan**. Smart click berhenti dulu, Jalur 2
+  dijalankan titik 1 → terakhir, lalu smart click lanjut lagi dan waktunya mulai dari nol.
+- Selama smart click berjalan, marker Jalur 2 ikut disembunyikan agar tidak muncul di tangkapan
+  layar; kalau ada titik Jalur 2 yang tertutup toolbar, smart click menolak mulai dengan pesan
+  jelas.
+
+Pengaturan dan titik Jalur 2 disimpan terpisah dari profil macro maupun profil smart, berlaku
+untuk semua profil, dan **tidak mengubah format Export/Import JSON** kedua mode.
 
 ### Overlay editor
 
