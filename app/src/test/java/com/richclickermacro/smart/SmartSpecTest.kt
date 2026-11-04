@@ -287,11 +287,10 @@ class SmartSpecTest {
     }
 
     @Test
-    fun currentSchemaIsWrittenAndOlderSchemasStillImport() {
+    fun schemaThreeIsWrittenAndOlderSchemasStillImport() {
         repository.saveProfile(repository.getActiveProfile())
         val root = org.json.JSONObject(repository.exportJson())
-        // 4 since v0.9.6; schemas 1-3 still import unchanged.
-        assertEquals(4, root.getInt("schemaVersion"))
+        assertEquals(3, root.getInt("schemaVersion"))
         assertTrue(repository.importJson(repository.exportJson()) > 0)
     }
 

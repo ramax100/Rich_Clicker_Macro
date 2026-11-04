@@ -163,8 +163,8 @@ class SmartClickAndroid12Test {
         } else {
             @Suppress("DEPRECATION") info.versionCode
         }
-        assertEquals(25, versionCode)
-        assertEquals("0.9.7", info.versionName)
+        assertEquals(26, versionCode)
+        assertEquals("0.9.8", info.versionName)
     }
 
     private fun collectTexts(view: android.view.View): List<String> {

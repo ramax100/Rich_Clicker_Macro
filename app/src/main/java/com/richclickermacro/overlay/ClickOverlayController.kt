@@ -10,6 +10,7 @@ import android.graphics.PixelFormat
 import android.graphics.Rect
 import android.graphics.Typeface
 import android.os.Build
+import android.os.SystemClock
 import android.util.DisplayMetrics
 import android.graphics.drawable.GradientDrawable
 import android.text.InputType
@@ -26,6 +27,10 @@ import com.richclickermacro.accessibility.AutoClickAccessibilityService
 import com.richclickermacro.data.ClickPreferences
 import com.richclickermacro.data.MacroPoint
 import com.richclickermacro.data.MacroProfile
+import com.richclickermacro.data.Path2Config
+import com.richclickermacro.data.Path2Format
+import com.richclickermacro.data.Path2Schedule
+import com.richclickermacro.data.Path2Store
 import com.richclickermacro.data.PointActionType
 import com.richclickermacro.diagnostics.MacroDiagnostics
 import com.richclickermacro.safety.GestureSafety
@@ -41,6 +46,15 @@ class ClickOverlayController(
     private val windowManager = service.getSystemService(WindowManager::class.java)
     private val handler = android.os.Handler(android.os.Looper.getMainLooper())
     private val targets = mutableListOf<TargetHolder>()
+    private val path2Targets = mutableListOf<TargetHolder>()
+    private val path2Store = Path2Store(service)
+    private val path2Schedule = Path2Schedule()
+    private var path2Config = Path2Config()
+    private var path2Index = 0
+    private var selectedPath2Index = -1
+    private var isPath2PanelOpen = false
+    private var isGestureInFlight = false
+    private var lastPath2Status = ""
 
     private var currentProfile: MacroProfile? = null
     private var controlsView: LinearLayout? = null
@@ -78,6 +92,13 @@ class ClickOverlayController(
     private lateinit var delayLabel: TextView
     private lateinit var compactStatus: TextView
     private lateinit var advancedButton: Button
+    private lateinit var path2Button: Button
+    private lateinit var path2Panel: LinearLayout
+    private lateinit var path2ToggleButton: Button
+    private lateinit var path2MinutesButton: Button
+    private lateinit var path2StatusLabel: TextView
+    private lateinit var addPath2Button: Button
+    private lateinit var removePath2Button: Button
 
     fun show(profile: MacroProfile) {
         dismissDelayDialog()
@@ -88,6 +109,7 @@ class ClickOverlayController(
         }
 
         currentProfile = profile
+        loadPath2Config()
         var allTargetsAdded = true
         for (point in profile.points) {
             if (!addTarget(point, persist = false)) {
@@ -97,6 +119,7 @@ class ClickOverlayController(
         }
         if (!allTargetsAdded || (targets.isEmpty() && !addTarget(createPoint(profile.defaultDelayMs), persist = false))) {
             removeAllTargets()
+            removeAllPath2Targets()
             currentProfile = null
             Toast.makeText(service, "Profil tidak dapat ditampilkan sepenuhnya", Toast.LENGTH_SHORT).show()
             return
@@ -111,6 +134,7 @@ class ClickOverlayController(
         }
         if (controlsView == null && !addControls()) {
             removeAllTargets()
+            removeAllPath2Targets()
             currentProfile = null
             return
         }
@@ -132,12 +156,20 @@ class ClickOverlayController(
         currentIndex = 0
         currentRepeatIndex = 0
         completedLoops = 0
+        isGestureInFlight = false
+        path2Index = 0
+        path2Schedule.pause(SystemClock.elapsedRealtime())
         targets.forEach {
             it.view.isActivePoint = false
             it.view.isMacroRunning = false
             it.endView?.isMacroRunning = false
         }
+        path2Targets.forEach {
+            it.view.isActivePoint = false
+            it.view.isMacroRunning = false
+        }
         setTargetsTouchable(true)
+        setPath2Touchable(true)
         applyKeepScreenOn(false)
         updateControls()
         service.stopMemorySampling()
@@ -159,6 +191,10 @@ class ClickOverlayController(
                 runCatching { windowManager.updateViewLayout(endView, endParams) }
             }
         }
+        path2Targets.forEach { holder ->
+            applyNormalizedPosition(holder)
+            runCatching { windowManager.updateViewLayout(holder.view, holder.params) }
+        }
         controlsView?.post { clampToolbarToDisplay() }
     }
 
@@ -179,6 +215,12 @@ class ClickOverlayController(
                 toolbarHandle = null
             }
         }
+        removeAllPath2Targets()
+        path2Schedule.reset()
+        path2Index = 0
+        selectedPath2Index = -1
+        isPath2PanelOpen = false
+        path2Config = path2Config.copy(points = emptyList())
         currentProfile = null
         selectedIndex = 0
         isToolbarCollapsed = false
@@ -217,6 +259,7 @@ class ClickOverlayController(
     fun overlayWindowCount(): Int {
         var count = targets.size
         count += targets.count { it.endView != null }
+        count += path2Targets.size
         if (controlsView != null) count++
         return count
     }
@@ -458,10 +501,60 @@ class ClickOverlayController(
             setTextColor(Color.rgb(203, 213, 225))
             setPadding(dp(3f), 0, dp(3f), 0)
         }
-        utilityRow.addView(markerVisibilityButton, LinearLayout.LayoutParams(dp(38f), dp(30f)))
-        utilityRow.addView(advancedButton, LinearLayout.LayoutParams(dp(66f), dp(30f)))
+        path2Button = controlButton("J2", "Buka atau tutup pengaturan Jalur 2") { togglePath2Panel() }.apply {
+            textSize = 11f
+            isAllCaps = false
+        }
+        utilityRow.addView(markerVisibilityButton, LinearLayout.LayoutParams(dp(32f), dp(30f)))
+        utilityRow.addView(path2Button, LinearLayout.LayoutParams(dp(40f), dp(30f)))
+        utilityRow.addView(advancedButton, LinearLayout.LayoutParams(dp(58f), dp(30f)))
         utilityRow.addView(compactStatus, LinearLayout.LayoutParams(0, dp(30f), 1f))
         content.addView(utilityRow, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(30f)))
+
+        // Jalur 2: titik kedua + waktunya sendiri, diatur dari panel ini saja.
+        path2Panel = LinearLayout(service).apply {
+            orientation = LinearLayout.VERTICAL
+            visibility = if (isPath2PanelOpen) View.VISIBLE else View.GONE
+            setPadding(dp(2f), dp(2f), dp(2f), dp(2f))
+            background = GradientDrawable().apply {
+                setColor(Color.argb(38, 148, 163, 184)); cornerRadius = dp(6f).toFloat()
+            }
+        }
+        val path2TimeRow = horizontalRow()
+        path2ToggleButton = settingButton("J2 mati", "Aktifkan atau matikan Jalur 2") { togglePath2Enabled() }.apply {
+            textSize = 10f
+        }
+        val path2MinusButton = controlButton("−", "Kurangi waktu Jalur 2 satu menit") { changePath2Minutes(-1) }
+        path2MinutesButton = settingButton("10 mnt", "Ketuk untuk mengetik waktu Jalur 2 dalam menit") {
+            showPath2MinutesDialog()
+        }.apply { textSize = 10f }
+        val path2PlusButton = controlButton("+", "Tambah waktu Jalur 2 satu menit") { changePath2Minutes(1) }
+        path2TimeRow.addView(path2ToggleButton, LinearLayout.LayoutParams(0, dp(30f), 1f))
+        path2TimeRow.addView(path2MinusButton, LinearLayout.LayoutParams(dp(28f), dp(30f)).apply { marginStart = dp(2f) })
+        path2TimeRow.addView(path2MinutesButton, LinearLayout.LayoutParams(dp(56f), dp(30f)))
+        path2TimeRow.addView(path2PlusButton, LinearLayout.LayoutParams(dp(28f), dp(30f)))
+        path2Panel.addView(path2TimeRow, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(30f)))
+
+        val path2PointRow = horizontalRow()
+        addPath2Button = settingButton("+ Titik J2", "Tambah titik Jalur 2") { addNewPath2Target() }.apply {
+            textSize = 10f
+        }
+        removePath2Button = settingButton("− Titik J2", "Hapus titik Jalur 2 terpilih") { removeSelectedPath2Target() }.apply {
+            textSize = 10f
+        }
+        path2PointRow.addView(addPath2Button, LinearLayout.LayoutParams(0, dp(30f), 1f).apply { marginEnd = dp(2f) })
+        path2PointRow.addView(removePath2Button, LinearLayout.LayoutParams(0, dp(30f), 1f))
+        path2Panel.addView(path2PointRow, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(30f)))
+
+        path2StatusLabel = TextView(service).apply {
+            textSize = 9f
+            maxLines = 1
+            gravity = Gravity.CENTER
+            setTextColor(Color.rgb(226, 232, 240))
+            setPadding(dp(2f), dp(1f), dp(2f), 0)
+        }
+        path2Panel.addView(path2StatusLabel, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(16f)))
+        content.addView(path2Panel, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT))
 
         // Advanced controls are one tap away, not permanently covering the game.
         val advanced = LinearLayout(service).apply {
@@ -558,6 +651,12 @@ class ClickOverlayController(
             advancedButton.text = if (isAdvancedOpen) "⚙ Tutup" else "⚙ Atur"
             advancedButton.contentDescription = if (isAdvancedOpen) "Tutup pengaturan titik" else "Buka pengaturan titik"
         }
+        if (::path2Panel.isInitialized) {
+            path2Panel.visibility = if (!isToolbarCollapsed && isPath2PanelOpen) View.VISIBLE else View.GONE
+        }
+        if (::path2Button.isInitialized) {
+            path2Button.text = if (path2Config.enabled) "J2✓" else "J2"
+        }
         val controls = controlsView ?: return
         val params = controlsParams ?: return
         runCatching { windowManager.updateViewLayout(controls, params) }
@@ -591,6 +690,18 @@ class ClickOverlayController(
             MacroDiagnostics.record(service, "start_rejected_toolbar_overlap", "point=$overlap")
             return
         }
+        if (path2Config.enabled) {
+            val path2Overlap = findPath2ToolbarOverlap()
+            if (path2Overlap != null) {
+                Toast.makeText(
+                    service,
+                    "Titik Jalur 2 nomor $path2Overlap tertutup toolbar. Pindahkan toolbar dulu.",
+                    Toast.LENGTH_LONG
+                ).show()
+                MacroDiagnostics.record(service, "start_rejected_path2_overlap", "point=$path2Overlap")
+                return
+            }
+        }
         val targetPackage = if (profile.stopOnAppChange) {
             service.foregroundPackage() ?: run {
                 Toast.makeText(
@@ -620,11 +731,14 @@ class ClickOverlayController(
             it.endView?.isMacroRunning = true
         }
 
-        if (!setTargetsTouchable(false)) {
+        val targetsReady = setTargetsTouchable(false)
+        val path2Ready = setPath2Touchable(false)
+        if (!targetsReady || !path2Ready) {
             stopWithMessage("Target tidak dapat disiapkan oleh sistem")
             return
         }
         applyKeepScreenOn(profile.keepScreenOn)
+        if (runState == RunState.RUNNING) path2ResumeClock()
         updateControls()
         service.startMemorySampling()
         service.notifyTileStateChanged()
@@ -642,6 +756,7 @@ class ClickOverlayController(
         if (runState != RunState.COUNTDOWN || generation != runGeneration) return
         if (remainingSeconds <= 0) {
             runState = RunState.RUNNING
+            path2ResumeClock()
             updateControls()
             executeCurrentPoint(generation)
             return
@@ -697,6 +812,7 @@ class ClickOverlayController(
             return
         }
 
+        isGestureInFlight = true
         val accepted = service.performAction(
             actionType = point.actionType,
             startX = x,
@@ -705,6 +821,7 @@ class ClickOverlayController(
             endY = endY,
             durationMs = point.actionDurationMs,
             onCompleted = {
+                isGestureInFlight = false
                 if (runState != RunState.RUNNING || generation != runGeneration) return@performAction
                 point.view.isActivePoint = false
                 point.endView?.isActivePoint = false
@@ -738,6 +855,7 @@ class ClickOverlayController(
                 handler.postDelayed({ executeCurrentPoint(generation) }, waitAfterPoint)
             },
             onCancelled = {
+                isGestureInFlight = false
                 if (runState == RunState.RUNNING && generation == runGeneration) {
                     MacroDiagnostics.record(service, "gesture_cancelled", "point=${currentIndex + 1} action=${point.actionType}")
                     stopWithMessage("Gesture dibatalkan oleh sistem")
@@ -746,6 +864,7 @@ class ClickOverlayController(
         )
 
         if (!accepted) {
+            isGestureInFlight = false
             MacroDiagnostics.record(service, "gesture_rejected", "point=${currentIndex + 1} action=${point.actionType}")
             stopWithMessage("Sistem menolak gesture. Macro dihentikan.")
         }
@@ -943,9 +1062,10 @@ class ClickOverlayController(
         val previousHidden = markersHidden
         val requestedHidden = !previousHidden
         markersHidden = requestedHidden
-        if (!setTargetsTouchable(runState == RunState.IDLE)) {
+        if (!setTargetsTouchable(runState == RunState.IDLE) || !setPath2Touchable(runState == RunState.IDLE)) {
             markersHidden = previousHidden
             setTargetsTouchable(runState == RunState.IDLE)
+            setPath2Touchable(runState == RunState.IDLE)
             Toast.makeText(service, "Marker belum dapat diubah oleh sistem", Toast.LENGTH_SHORT).show()
             return
         }
@@ -954,6 +1074,7 @@ class ClickOverlayController(
             holder.view.visibility = visibility
             holder.endView?.visibility = visibility
         }
+        path2Targets.forEach { holder -> holder.view.visibility = visibility }
         markerVisibilityButton.text = if (markersHidden) "○" else "◉"
         markerVisibilityButton.contentDescription = if (markersHidden) "Tampilkan marker" else "Sembunyikan marker"
     }
@@ -1015,6 +1136,22 @@ class ClickOverlayController(
         advancedButton.alpha = if (idle) 1f else 0.4f
         markerVisibilityButton.isEnabled = true
         markerVisibilityButton.alpha = 1f
+        if (::path2ToggleButton.isInitialized) {
+            path2ToggleButton.isEnabled = idle
+            path2ToggleButton.alpha = if (idle) 1f else 0.4f
+            path2ToggleButton.text = if (path2Config.enabled) "J2 aktif" else "J2 mati"
+            path2MinutesButton.isEnabled = idle
+            path2MinutesButton.alpha = if (idle) 1f else 0.4f
+            path2MinutesButton.text = "${path2Config.intervalMinutes} mnt"
+            addPath2Button.isEnabled = idle && path2Targets.size < Path2Config.MAX_POINTS
+            addPath2Button.alpha = if (addPath2Button.isEnabled) 1f else 0.4f
+            removePath2Button.isEnabled = idle && path2Targets.isNotEmpty()
+            removePath2Button.alpha = if (removePath2Button.isEnabled) 1f else 0.4f
+            path2Button.isEnabled = idle
+            path2Button.alpha = if (idle) 1f else 0.55f
+            path2Button.text = if (path2Config.enabled) "J2✓" else "J2"
+            updatePath2Status()
+        }
 
         if (targets.isEmpty()) return
         val selectedPoint = targets[selectedIndex]
@@ -1032,12 +1169,451 @@ class ClickOverlayController(
             RunState.IDLE -> "T${selectedIndex + 1}/${targets.size} • ${ClickPreferences.formatDelaySeconds(targets[selectedIndex].delayMs)}s"
             RunState.COUNTDOWN -> delayLabel.text
             RunState.RUNNING -> "L${completedLoops + 1} • T${currentIndex + 1} • ${currentRepeatIndex + 1}/${targets[currentIndex].repeatCount}"
+            RunState.PATH2 -> "JALUR 2 • T${path2Index + 1}/${path2Targets.size}"
         }
         compactStatus.text = when (runState) {
             RunState.IDLE -> "T${selectedIndex + 1}/${targets.size}"
             RunState.COUNTDOWN -> compactStatus.text
             RunState.RUNNING -> "L${completedLoops + 1} • T${currentIndex + 1}"
+            RunState.PATH2 -> "J2 • T${path2Index + 1}/${path2Targets.size}"
         }
+    }
+
+    // ---------------------------------------------------------------- Jalur 2
+    // Jalur 2 = rangkaian titik kedua. Dipicu murni oleh waktu: setelah Jalur 1
+    // berjalan selama N menit, Jalur 1 berhenti sejenak, Jalur 2 dijalankan dari
+    // titik 1 sampai terakhir satu kali, lalu Jalur 1 lanjut dari titik 1.
+
+    private val path2Tick = object : Runnable {
+        override fun run() {
+            if (runState != RunState.RUNNING) return
+            if (!path2Config.enabled || path2Targets.isEmpty()) return
+            val now = SystemClock.elapsedRealtime()
+            if (!path2Schedule.isDue(now, path2Config.intervalMs)) {
+                updatePath2Status(now)
+                handler.postDelayed(this, PATH2_TICK_MS)
+                return
+            }
+            // Jangan potong gesture yang sedang berjalan; cek lagi sesudahnya.
+            if (isGestureInFlight) {
+                handler.postDelayed(this, PATH2_TICK_MS)
+                return
+            }
+            beginPath2()
+        }
+    }
+
+    private fun loadPath2Config() {
+        removeAllPath2Targets()
+        path2Config = path2Store.load()
+        path2Config.points.forEach { point -> addPath2Target(point, persist = false) }
+        path2Schedule.reset()
+        path2Index = 0
+        selectedPath2Index = if (path2Targets.isEmpty()) -1 else 0
+        relabelPath2Targets()
+        if (::path2Panel.isInitialized) {
+            path2Panel.visibility = if (isPath2PanelOpen) View.VISIBLE else View.GONE
+        }
+        updatePath2Status()
+    }
+
+    private fun togglePath2Panel() {
+        if (runState != RunState.IDLE) return
+        isPath2PanelOpen = !isPath2PanelOpen
+        applyToolbarVisibility()
+        updatePath2Status()
+    }
+
+    private fun togglePath2Enabled() {
+        if (runState != RunState.IDLE) return
+        if (!path2Config.enabled && path2Targets.isEmpty()) {
+            Toast.makeText(service, "Tambahkan dulu minimal satu titik Jalur 2", Toast.LENGTH_SHORT).show()
+            return
+        }
+        path2Config = path2Config.copy(enabled = !path2Config.enabled)
+        path2Store.save(path2Config)
+        updateControls()
+    }
+
+    private fun changePath2Minutes(delta: Int) {
+        if (runState != RunState.IDLE) return
+        path2Config = path2Config.copy(
+            intervalMinutes = Path2Config.sanitizeMinutes(path2Config.intervalMinutes + delta)
+        )
+        path2Store.save(path2Config)
+        updateControls()
+    }
+
+    private fun showPath2MinutesDialog() {
+        if (runState != RunState.IDLE) return
+        val input = EditText(service).apply {
+            inputType = InputType.TYPE_CLASS_NUMBER
+            setText(path2Config.intervalMinutes.toString())
+            setSelection(text.length)
+            hint = "${Path2Config.MIN_INTERVAL_MINUTES} - ${Path2Config.MAX_INTERVAL_MINUTES}"
+        }
+        AlertDialog.Builder(service)
+            .setTitle("Waktu Jalur 2 (menit)")
+            .setMessage("Jalur 2 dijalankan setelah makro pertama berjalan selama waktu ini.")
+            .setView(input)
+            .setPositiveButton("Simpan") { _, _ ->
+                val minutes = input.text.toString().trim().toIntOrNull()
+                if (minutes == null) {
+                    Toast.makeText(service, "Masukkan angka menit", Toast.LENGTH_SHORT).show()
+                } else {
+                    path2Config = path2Config.copy(intervalMinutes = Path2Config.sanitizeMinutes(minutes))
+                    path2Store.save(path2Config)
+                    updateControls()
+                }
+            }
+            .setNegativeButton("Batal", null)
+            .show()
+    }
+
+    private fun addNewPath2Target() {
+        if (runState != RunState.IDLE) return
+        if (path2Targets.size >= Path2Config.MAX_POINTS) {
+            Toast.makeText(service, "Jalur 2 maksimal ${Path2Config.MAX_POINTS} titik", Toast.LENGTH_SHORT).show()
+            return
+        }
+        val index = path2Targets.size
+        val normalizedX = (0.18 + ((index * 0.61803398875) % 0.62)).toFloat().coerceIn(0.08f, 0.92f)
+        val normalizedY = (0.24 + ((index * 0.38196601125) % 0.54)).toFloat().coerceIn(0.1f, 0.9f)
+        val delay = currentProfile?.defaultDelayMs ?: ClickPreferences.DEFAULT_DELAY_MS
+        val added = addPath2Target(
+            MacroPoint(
+                id = System.nanoTime(),
+                normalizedX = normalizedX,
+                normalizedY = normalizedY,
+                delayMs = ClickPreferences.sanitizeDelay(delay)
+            )
+        )
+        if (added && !path2Config.enabled) {
+            path2Config = path2Config.copy(enabled = true)
+            path2Store.save(path2Config)
+            Toast.makeText(service, "Jalur 2 diaktifkan otomatis", Toast.LENGTH_SHORT).show()
+            updateControls()
+        }
+    }
+
+    private fun addPath2Target(point: MacroPoint, persist: Boolean = true): Boolean {
+        if (runState != RunState.IDLE) return false
+        if (path2Targets.size >= Path2Config.MAX_POINTS) return false
+
+        val target = MacroTargetView(service).apply {
+            sequenceNumber = path2Targets.size + 1
+            isPath2Marker = true
+            contentDescription = "Titik Jalur 2 nomor ${path2Targets.size + 1}, geser untuk memindahkan"
+            visibility = if (markersHidden) View.INVISIBLE else View.VISIBLE
+        }
+        val params = createMarkerLayoutParams(point.normalizedX, point.normalizedY)
+        if (markersHidden) params.flags = params.flags or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
+        val holder = TargetHolder(
+            id = point.id,
+            view = target,
+            params = params,
+            normalizedX = point.normalizedX.coerceIn(0f, 1f),
+            normalizedY = point.normalizedY.coerceIn(0f, 1f),
+            delayMs = ClickPreferences.sanitizeDelay(point.delayMs),
+            actionType = PointActionType.TAP,
+            actionDurationMs = MacroPoint.MIN_ACTION_DURATION_MS,
+            repeatCount = 1,
+            endNormalizedX = point.normalizedX,
+            endNormalizedY = point.normalizedY
+        )
+        attachPath2DragHandler(holder)
+        if (runCatching { windowManager.addView(target, params) }.isFailure) {
+            Toast.makeText(service, "Titik Jalur 2 tidak dapat ditambahkan oleh sistem", Toast.LENGTH_SHORT).show()
+            return false
+        }
+        path2Targets.add(holder)
+        selectedPath2Index = path2Targets.lastIndex
+        relabelPath2Targets()
+        if (persist) savePath2()
+        updateControls()
+        return true
+    }
+
+    private fun removeSelectedPath2Target() {
+        if (runState != RunState.IDLE) return
+        if (path2Targets.isEmpty()) {
+            Toast.makeText(service, "Jalur 2 belum punya titik", Toast.LENGTH_SHORT).show()
+            return
+        }
+        val index = selectedPath2Index.coerceIn(0, path2Targets.lastIndex)
+        if (!removeViewSafely(path2Targets[index].view)) {
+            Toast.makeText(service, "Titik Jalur 2 gagal dihapus. Coba tutup editor.", Toast.LENGTH_SHORT).show()
+            return
+        }
+        path2Targets.removeAt(index)
+        selectedPath2Index = path2Targets.lastIndex
+        relabelPath2Targets()
+        if (path2Targets.isEmpty()) {
+            path2Config = path2Config.copy(enabled = false, points = emptyList())
+            path2Store.save(path2Config)
+        } else {
+            savePath2()
+        }
+        updateControls()
+    }
+
+    private fun relabelPath2Targets() {
+        path2Targets.forEachIndexed { index, holder ->
+            holder.view.sequenceNumber = index + 1
+            holder.view.isSelectedPoint = index == selectedPath2Index
+            holder.view.contentDescription = "Titik Jalur 2 nomor ${index + 1}, geser untuk memindahkan"
+        }
+    }
+
+    private fun removeAllPath2Targets(): Boolean {
+        var allRemoved = true
+        val iterator = path2Targets.iterator()
+        while (iterator.hasNext()) {
+            val holder = iterator.next()
+            if (removeViewSafely(holder.view)) iterator.remove() else allRemoved = false
+        }
+        selectedPath2Index = -1
+        return allRemoved
+    }
+
+    private fun attachPath2DragHandler(holder: TargetHolder) {
+        var initialX = 0
+        var initialY = 0
+        var initialTouchX = 0f
+        var initialTouchY = 0f
+        holder.view.setOnTouchListener { _, event ->
+            when (event.actionMasked) {
+                MotionEvent.ACTION_DOWN -> {
+                    val index = path2Targets.indexOf(holder)
+                    if (index < 0) return@setOnTouchListener false
+                    selectedPath2Index = index
+                    relabelPath2Targets()
+                    updateControls()
+                    initialX = holder.params.x
+                    initialY = holder.params.y
+                    initialTouchX = event.rawX
+                    initialTouchY = event.rawY
+                    true
+                }
+                MotionEvent.ACTION_MOVE -> {
+                    holder.params.x = initialX + (event.rawX - initialTouchX).roundToInt()
+                    holder.params.y = initialY + (event.rawY - initialTouchY).roundToInt()
+                    clampTarget(holder)
+                    runCatching { windowManager.updateViewLayout(holder.view, holder.params) }
+                    true
+                }
+                MotionEvent.ACTION_UP -> {
+                    holder.view.performClick()
+                    updateNormalizedPosition(holder)
+                    savePath2()
+                    true
+                }
+                MotionEvent.ACTION_CANCEL -> {
+                    holder.params.x = initialX
+                    holder.params.y = initialY
+                    clampTarget(holder)
+                    runCatching { windowManager.updateViewLayout(holder.view, holder.params) }
+                    true
+                }
+                else -> false
+            }
+        }
+    }
+
+    private fun savePath2() {
+        path2Targets.forEach { holder -> updateNormalizedPosition(holder) }
+        val points = path2Targets.map { holder ->
+            MacroPoint(
+                id = holder.id,
+                normalizedX = holder.normalizedX,
+                normalizedY = holder.normalizedY,
+                delayMs = holder.delayMs,
+                actionType = PointActionType.TAP,
+                actionDurationMs = MacroPoint.MIN_ACTION_DURATION_MS
+            )
+        }
+        path2Config = path2Config.copy(points = points)
+        path2Store.save(path2Config)
+        if (::path2Button.isInitialized) path2Button.text = if (path2Config.enabled) "J2✓" else "J2"
+        updatePath2Status()
+    }
+
+    private fun setPath2Touchable(touchable: Boolean): Boolean {
+        var allUpdated = true
+        val effectiveTouchable = touchable && !markersHidden
+        val windowAlpha = if (effectiveTouchable) 1f else 0.7f
+        path2Targets.forEach { holder ->
+            holder.params.flags = touchFlags(holder.params.flags, effectiveTouchable)
+            holder.params.alpha = windowAlpha
+            if (runCatching { windowManager.updateViewLayout(holder.view, holder.params) }.isFailure) {
+                allUpdated = false
+            }
+        }
+        return allUpdated
+    }
+
+    private fun findPath2ToolbarOverlap(): Int? {
+        for (index in path2Targets.indices) {
+            val holder = path2Targets[index]
+            if (holder.view.width <= 0 || holder.view.height <= 0) continue
+            val location = IntArray(2)
+            holder.view.getLocationOnScreen(location)
+            val centerX = location[0] + holder.view.width / 2f
+            val centerY = location[1] + holder.view.height / 2f
+            if (isPointUnderToolbar(centerX, centerY)) return index + 1
+        }
+        return null
+    }
+
+    private fun updatePath2Status(nowMs: Long = SystemClock.elapsedRealtime()) {
+        if (!::path2StatusLabel.isInitialized) return
+        val text = when {
+            !path2Config.enabled -> "J2 mati • ${path2Targets.size} titik"
+            path2Targets.isEmpty() -> "J2 aktif • titik masih kosong"
+            runState == RunState.PATH2 -> "J2 jalan • T${path2Index + 1}/${path2Targets.size}"
+            runState == RunState.RUNNING ->
+                "J2 ${path2Targets.size} titik • sisa ${Path2Format.formatRemaining(path2Schedule.remainingMs(nowMs, path2Config.intervalMs))}"
+            else -> "J2 ${path2Targets.size} titik • tiap ${path2Config.intervalMinutes} mnt"
+        }
+        if (text != lastPath2Status) {
+            lastPath2Status = text
+            path2StatusLabel.text = text
+        }
+    }
+
+    private fun path2ResumeClock() {
+        if (!path2Config.enabled || path2Targets.isEmpty()) {
+            updatePath2Status()
+            return
+        }
+        path2Schedule.resume(SystemClock.elapsedRealtime())
+        handler.removeCallbacks(path2Tick)
+        handler.postDelayed(path2Tick, PATH2_TICK_MS)
+        updatePath2Status()
+    }
+
+    private fun beginPath2() {
+        if (runState != RunState.RUNNING || path2Targets.isEmpty()) return
+        handler.removeCallbacksAndMessages(null)
+        path2Schedule.pause(SystemClock.elapsedRealtime())
+        runState = RunState.PATH2
+        path2Index = 0
+        // Jalur 1 akan dimulai lagi dari titik 1 setelah Jalur 2 selesai.
+        currentIndex = 0
+        currentRepeatIndex = 0
+        isGestureInFlight = false
+        targets.forEach {
+            it.view.isActivePoint = false
+            it.endView?.isActivePoint = false
+            it.view.isMacroRunning = true
+        }
+        path2Targets.forEach {
+            it.view.isActivePoint = false
+            it.view.isMacroRunning = true
+        }
+        MacroDiagnostics.record(
+            service, "jalur2_start",
+            "points=${path2Targets.size} setiapMenit=${path2Config.intervalMinutes}"
+        )
+        updateControls()
+        val generation = runGeneration
+        handler.postDelayed({ executePath2Point(generation) }, OVERLAY_FLAG_SETTLE_MS)
+    }
+
+    private fun executePath2Point(generation: Long) {
+        if (runState != RunState.PATH2 || generation != runGeneration) return
+        if (path2Targets.isEmpty()) {
+            finishPath2(generation)
+            return
+        }
+        val frame = screenFrame()
+        if (runScreenFrame != frame) {
+            stopWithMessage("Ukuran atau orientasi layar berubah. Periksa marker sebelum memulai lagi.")
+            return
+        }
+        val point = path2Targets[path2Index]
+        if (!isMarkerAligned(point.view, point.normalizedX, point.normalizedY, frame)) {
+            MacroDiagnostics.record(service, "jalur2_alignment_rejected", "point=${path2Index + 1}")
+            stopWithMessage("Posisi marker Jalur 2 tidak cocok dengan layar. Periksa titik, lalu mulai lagi.")
+            return
+        }
+        path2Targets.forEach { it.view.isActivePoint = false }
+        point.view.isActivePoint = true
+        updateControls()
+
+        val location = IntArray(2)
+        point.view.getLocationOnScreen(location)
+        val (x, y) = GestureSafety.clampToFrame(
+            frame,
+            location[0] + point.view.width / 2f,
+            location[1] + point.view.height / 2f
+        )
+        if (!GestureSafety.isValidGesture(x, y, x, y, point.actionDurationMs)) {
+            stopWithMessage("Koordinat Jalur 2 tidak valid. Periksa marker.")
+            return
+        }
+        if (gestureTouchesToolbar(x, y, x, y, false)) {
+            stopWithMessage("Toolbar menutupi titik Jalur 2. Pindahkan toolbar, lalu mulai lagi.")
+            return
+        }
+
+        isGestureInFlight = true
+        val accepted = service.performAction(
+            actionType = PointActionType.TAP,
+            startX = x,
+            startY = y,
+            endX = x,
+            endY = y,
+            durationMs = point.actionDurationMs,
+            onCompleted = {
+                isGestureInFlight = false
+                if (runState != RunState.PATH2 || generation != runGeneration) return@performAction
+                point.view.isActivePoint = false
+                if (path2Index >= path2Targets.lastIndex) {
+                    finishPath2(generation)
+                    return@performAction
+                }
+                path2Index++
+                updateControls()
+                handler.postDelayed({ executePath2Point(generation) }, point.delayMs)
+            },
+            onCancelled = {
+                isGestureInFlight = false
+                if (runState == RunState.PATH2 && generation == runGeneration) {
+                    MacroDiagnostics.record(
+                        service, "jalur2_gesture_cancelled",
+                        "point=${path2Index + 1}"
+                    )
+                    stopWithMessage("Gesture Jalur 2 dibatalkan oleh sistem")
+                }
+            }
+        )
+        if (!accepted) {
+            isGestureInFlight = false
+            MacroDiagnostics.record(service, "jalur2_gesture_rejected", "point=${path2Index + 1}")
+            stopWithMessage("Sistem menolak gesture Jalur 2. Macro dihentikan.")
+        }
+    }
+
+    private fun finishPath2(generation: Long) {
+        if (runState != RunState.PATH2 || generation != runGeneration) return
+        path2Targets.forEach {
+            it.view.isActivePoint = false
+            it.view.isMacroRunning = false
+        }
+        path2Index = 0
+        currentIndex = 0
+        currentRepeatIndex = 0
+        isGestureInFlight = false
+        // Jalur 1 kembali berjalan; hitungan waktunya dimulai dari nol lagi.
+        path2Schedule.reset()
+        path2Schedule.resume(SystemClock.elapsedRealtime())
+        runState = RunState.RUNNING
+        MacroDiagnostics.record(service, "jalur2_finish", "resumeFromPoint=1")
+        updateControls()
+        handler.removeCallbacks(path2Tick)
+        handler.postDelayed(path2Tick, PATH2_TICK_MS)
+        handler.postDelayed({ executeCurrentPoint(generation) }, PATH2_RESUME_GAP_MS)
     }
 
     private fun toggleToolbar() {
@@ -1493,7 +2069,7 @@ class ClickOverlayController(
         var endParams: WindowManager.LayoutParams? = null
     )
 
-    private enum class RunState { IDLE, COUNTDOWN, RUNNING }
+    private enum class RunState { IDLE, COUNTDOWN, RUNNING, PATH2 }
 
     companion object {
         private const val TOOLBAR_WIDTH_DP = 220f
@@ -1501,6 +2077,8 @@ class ClickOverlayController(
         private const val OVERLAY_FLAG_SETTLE_MS = 50L
         private const val REPEAT_GAP_MS = 100L
         private const val MANY_POINTS_WARNING = 20
+        private const val PATH2_TICK_MS = 500L
+        private const val PATH2_RESUME_GAP_MS = 120L
     }
 }
 
@@ -1573,6 +2151,13 @@ private class MacroTargetView(context: Context) : View(context) {
                 invalidate()
             }
         }
+    var isPath2Marker: Boolean = false
+        set(value) {
+            if (field != value) {
+                field = value
+                invalidate()
+            }
+        }
 
     override fun onDraw(canvas: Canvas) {
         super.onDraw(canvas)
@@ -1581,8 +2166,10 @@ private class MacroTargetView(context: Context) : View(context) {
         val radius = (if (isMacroRunning) 8f else 11f) * density
         fillPaint.color = when {
             isActivePoint -> Color.rgb(34, 197, 94)
-            isEndpoint -> Color.rgb(14, 165, 233)
+            isSelectedPoint && isPath2Marker -> Color.rgb(217, 119, 6)
             isSelectedPoint -> Color.rgb(79, 70, 229)
+            isPath2Marker -> Color.rgb(245, 158, 11)
+            isEndpoint -> Color.rgb(14, 165, 233)
             else -> Color.rgb(239, 68, 68)
         }
         // Keep running markers below Android 12's 0.8 untrusted-touch opacity threshold.
@@ -1596,9 +2183,17 @@ private class MacroTargetView(context: Context) : View(context) {
         canvas.drawLine(centerX, centerY - extent, centerX, centerY - radius, strokePaint)
         canvas.drawLine(centerX, centerY + radius, centerX, centerY + extent, strokePaint)
 
-        textPaint.textSize = (if (sequenceNumber < 100) 10f else 8f) * density
+        textPaint.textSize = when {
+            isPath2Marker -> 8f * density
+            sequenceNumber < 100 -> 10f * density
+            else -> 8f * density
+        }
         val baseline = centerY - (textPaint.ascent() + textPaint.descent()) / 2f
-        val label = if (isEndpoint) "${sequenceNumber}E" else sequenceNumber.toString()
+        val label = when {
+            isEndpoint -> "${sequenceNumber}E"
+            isPath2Marker -> "J$sequenceNumber"
+            else -> sequenceNumber.toString()
+        }
         canvas.drawText(label, centerX, baseline, textPaint)
     }
 }
