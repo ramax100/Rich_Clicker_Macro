@@ -193,6 +193,9 @@ class SmartOverlayController(
         toolbarHiddenForCapture = false
         path2Schedule.pause(SystemClock.elapsedRealtime())
         path2Index = 0
+        path2RepeatIndex = 0
+        pickForPath2 = false
+        reopenPath2AfterPick = false
         removePicker()
         toolbar?.visibility = View.VISIBLE
         if (wasRunning) service.cancelActiveAction()
@@ -638,7 +641,7 @@ class SmartOverlayController(
 
     /** Dipanggil setelah pengguna mengetuk layar untuk titik Jalur 2. */
     private fun restorePath2PanelAfterPick() {
-        if (!reopenPath2AfterPick) return
+        if (!reopenPath2AfterPick || disposing) return
         reopenPath2AfterPick = false
         if (::path2Panel.isInitialized && !isRunning()) {
             isPath2Open = true
@@ -831,7 +834,6 @@ class SmartOverlayController(
         if (!isPath2Open || isCollapsed) return
         val ready = path2Markers.count { it.point.isReady }
         val problem = runCatching { sampler.capabilityProblem() }.getOrNull()
-        applyPath2EnabledLook()
         val text = when {
             // Keadaan saklar selalu disebut lebih dulu: OFF berarti Jalur 2 tidak akan
             // menyentuh macro biasa sama sekali.
@@ -845,6 +847,7 @@ class SmartOverlayController(
             // Tanpa izin baca layar, warna tidak mungkin terbaca — sebutkan sebabnya
             // supaya panel tidak terlihat "mati" tanpa alasan.
             problem != null && ready == 0 -> "Jalur 2 ON • izin baca layar mati"
+            ready == 0 -> "Jalur 2 ON • ambil warna dulu (0/${path2Markers.size} siap)"
             runState == SmartRunState.PATH2 ->
                 "Jalur 2 ON • jalan titik ${path2Index + 1}/${path2Markers.size} • J2 untuk stop"
             runState == SmartRunState.RUNNING ->
@@ -858,7 +861,11 @@ class SmartOverlayController(
     }
 
     private fun togglePath2Panel() {
-        if (capturingColor || pickerView != null) return
+        // Saat macro berjalan, membuka panel akan meninggikan toolbar dan bisa
+        // menutupi titik yang sedang diawasi — run berikutnya lalu berhenti sendiri
+        // dengan pesan "tertutup toolbar". Karena itu panel hanya untuk keadaan diam;
+        // saat berjalan, tombol J2 sudah menjadi saklar OFF darurat.
+        if (isRunning() || capturingColor || pickerView != null) return
         isPath2Open = !isPath2Open
         path2Panel.visibility = if (isPath2Open) View.VISIBLE else View.GONE
         path2Button.text = if (path2Config.enabled) "J2✓" else "J2"
@@ -1937,6 +1944,8 @@ class SmartOverlayController(
 
     private fun updateUi() {
         if (!::playButton.isInitialized || toolbar == null) return
+        // Keadaan saklar harus terlihat walau panel Jalur 2 sedang tertutup.
+        applyPath2EnabledLook()
         val idle = runState == SmartRunState.IDLE
         playButton.isEnabled = idle && holders.isNotEmpty()
         stopButton.isEnabled = !idle

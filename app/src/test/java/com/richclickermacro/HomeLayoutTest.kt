@@ -132,6 +132,6 @@ class HomeLayoutTest {
     fun versionLabelIsShown() {
         val activity = Robolectric.buildActivity(MainActivity::class.java).create().resume().get()
         val all = texts(activity.window.decorView)
-        assertTrue(all.any { it.contains("0.9.14") })
+        assertTrue(all.any { it.contains("0.9.15") })
     }
 }

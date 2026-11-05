@@ -201,6 +201,77 @@ class SmartPath2ToggleTest {
     }
 
     @Test
+    fun panelCannotBeOpenedWhileRunningSoTheToolbarStaysSmall() {
+        seedPoint()
+        val runStateField = controller.javaClass.getDeclaredField("runState").apply { isAccessible = true }
+        val states = runStateField.type.enumConstants as Array<Enum<*>>
+        runStateField.set(controller, states.first { it.name == "RUNNING" })
+        val panel = field(controller, "path2Panel") as android.view.View
+        call("togglePath2Panel")
+        shadowOf(Looper.getMainLooper()).idle()
+        assertEquals(
+            "panel tidak boleh terbuka saat berjalan (toolbar bisa menutupi titik)",
+            android.view.View.GONE,
+            panel.visibility
+        )
+        assertEquals(false, field(controller, "isPath2Open"))
+    }
+
+    @Test
+    fun stoppingTheRunClearsThePendingPointPlacement() {
+        seedPoint()
+        call("startPick", true)
+        shadowOf(Looper.getMainLooper()).idle()
+        assertEquals(true, field(controller, "pickForPath2"))
+        call("stop", "test_stop")
+        shadowOf(Looper.getMainLooper()).idle()
+        assertEquals(
+            "penanda titik Jalur 2 harus ikut dibatalkan saat run dihentikan",
+            false,
+            field(controller, "pickForPath2")
+        )
+        assertEquals(null, field(controller, "pickerView"))
+    }
+
+    @Test
+    fun markersAreDimmedWhenTheSwitchIsOff() {
+        seedPoint()
+        val holder = (field(controller, "path2Markers") as MutableList<*>).first()!!
+        val view = holder.javaClass.getDeclaredField("view").apply { isAccessible = true }.get(holder) as android.view.View
+        call("updateUi")
+        shadowOf(Looper.getMainLooper()).idle()
+        assertEquals("titik harus redup saat OFF", 0.45f, view.alpha, 0.001f)
+        call("setPath2Enabled", true)
+        shadowOf(Looper.getMainLooper()).idle()
+        assertEquals("titik harus terang saat ON", 1f, view.alpha, 0.001f)
+    }
+
+    @Test
+    fun statusSaysColoursAreMissingWhenNothingIsReady() {
+        seedPoint(ready = false)
+        call("setPath2Enabled", true)
+        val store = Path2Store(service)
+        // Paksa keadaan "ON tapi belum ada warna" lewat penyimpanan langsung.
+        store.save(store.load().copy(enabled = true))
+        call("loadPath2")
+        val panel = field(controller, "path2Panel") as android.view.View
+        (field(controller, "path2Button") as Button).performClick()
+        shadowOf(Looper.getMainLooper()).idle()
+        val label = field(controller, "path2StatusLabel") as android.widget.TextView
+        // Di perangkat nyata pesannya "ambil warna dulu"; di lingkungan test tanpa izin
+        // baca layar pesannya menyebut izinnya. Yang penting: status tidak berpura-pura
+        // siap dan menyebut langkah berikutnya.
+        val text = label.text.toString()
+        assertTrue(
+            "status harus menjelaskan, bukan pura-pura siap: $text",
+            text.contains("ambil warna") || text.contains("izin baca")
+        )
+        assertTrue("status=$text", text.contains("ON"))
+        assertFalse("status=$text", text.contains("tiap"))
+        assertEquals(android.view.View.VISIBLE, panel.visibility)
+    }
+
+    @Test
     fun turningItBackOnRestartsTheCountdownFromZero() {
         seedPoint()
         call("setPath2Enabled", true)
