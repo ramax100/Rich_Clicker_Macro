@@ -801,6 +801,12 @@ class SmartOverlayController(
         }
     }
 
+    /** Titik Jalur 2 diredupkan saat Jalur 2 mati: kelihatan, tapi jelas tidak aktif. */
+    private fun applyPath2EnabledLook() {
+        val alpha = if (path2Config.enabled) 1f else 0.45f
+        path2Markers.forEach { holder -> holder.view.alpha = alpha }
+    }
+
     private fun setPath2Touchable(touchable: Boolean) {
         path2Markers.forEach { holder ->
             holder.params.flags = touchFlags(holder.params.flags, touchable)
@@ -825,30 +831,34 @@ class SmartOverlayController(
         if (!isPath2Open || isCollapsed) return
         val ready = path2Markers.count { it.point.isReady }
         val problem = runCatching { sampler.capabilityProblem() }.getOrNull()
+        applyPath2EnabledLook()
         val text = when {
+            // Keadaan saklar selalu disebut lebih dulu: OFF berarti Jalur 2 tidak akan
+            // menyentuh macro biasa sama sekali.
+            !path2Config.enabled && path2Markers.isEmpty() ->
+                "Jalur 2 OFF • tekan + Titik J2 untuk mulai"
+            !path2Config.enabled && ready == 0 ->
+                "Jalur 2 OFF • ambil warna dulu (0/${path2Markers.size} siap)"
+            !path2Config.enabled ->
+                "Jalur 2 OFF • $ready/${path2Markers.size} siap • tekan J2 ON untuk menyalakan"
+            path2Markers.isEmpty() -> "Jalur 2 ON • titik masih kosong"
             // Tanpa izin baca layar, warna tidak mungkin terbaca — sebutkan sebabnya
             // supaya panel tidak terlihat "mati" tanpa alasan.
-            problem != null && ready == 0 -> "Jalur 2 belum bisa baca layar • izin baca mati"
-            !path2Config.enabled && path2Markers.isNotEmpty() && ready == 0 ->
-                "Jalur 2 nonaktif • ambil warna dulu (0/${path2Markers.size} siap)"
-            !path2Config.enabled && path2Markers.isEmpty() ->
-                "Jalur 2 nonaktif • tekan + Titik J2 untuk mulai"
-            !path2Config.enabled -> "Jalur 2 nonaktif • $ready/${path2Markers.size} titik siap • tekan J2"
-            path2Markers.isEmpty() -> "Jalur 2 aktif • titik masih kosong"
+            problem != null && ready == 0 -> "Jalur 2 ON • izin baca layar mati"
             runState == SmartRunState.PATH2 ->
-                "Jalur 2 jalan • titik ${path2Index + 1}/${path2Markers.size}"
+                "Jalur 2 ON • jalan titik ${path2Index + 1}/${path2Markers.size} • J2 untuk stop"
             runState == SmartRunState.RUNNING ->
-                "Jalur 2 tiap ${path2Config.intervalMinutes} mnt • sisa " +
+                "Jalur 2 ON • tiap ${path2Config.intervalMinutes} mnt • sisa " +
                     Path2Format.formatRemaining(
                         path2Schedule.remainingMs(SystemClock.elapsedRealtime(), path2Config.intervalMs)
                     )
-            else -> "Jalur 2 $ready/${path2Markers.size} titik siap • tiap ${path2Config.intervalMinutes} mnt"
+            else -> "Jalur 2 ON • $ready/${path2Markers.size} siap • tiap ${path2Config.intervalMinutes} mnt"
         }
         if (path2StatusLabel.text != text) path2StatusLabel.text = text
     }
 
     private fun togglePath2Panel() {
-        if (isRunning()) return
+        if (capturingColor || pickerView != null) return
         isPath2Open = !isPath2Open
         path2Panel.visibility = if (isPath2Open) View.VISIBLE else View.GONE
         path2Button.text = if (path2Config.enabled) "J2✓" else "J2"
@@ -857,19 +867,60 @@ class SmartOverlayController(
         updatePath2Status()
     }
 
-    private fun togglePath2Enabled() {
-        if (isRunning()) return
-        if (!path2Config.enabled && path2Markers.isEmpty()) {
-            toast("Tambahkan dulu minimal satu titik Jalur 2.")
-            return
+    private fun togglePath2Enabled() = setPath2Enabled(!path2Config.enabled)
+
+    /**
+     * Saklar utama Jalur 2.
+     *
+     * Mematikan SELALU boleh — termasuk saat macro sedang berjalan atau saat Jalur 2
+     * sendiri sedang bekerja — karena satu-satunya cara Jalur 2 bisa bentrok dengan
+     * macro biasa adalah kalau ia tidak bisa dimatikan. Bila Jalur 2 sedang bekerja,
+     * rangkaiannya dihentikan saat itu juga dan macro biasa langsung dilanjutkan.
+     * Timer ikut direset supaya menyalakannya lagi mulai dari nol.
+     */
+    private fun setPath2Enabled(enabled: Boolean) {
+        if (capturingColor || pickerView != null) return
+        if (enabled) {
+            if (path2Markers.isEmpty()) {
+                toast("Tambahkan dulu minimal satu titik Jalur 2.")
+                return
+            }
+            if (path2Markers.none { it.point.isReady }) {
+                toast("Ambil warna dulu untuk minimal satu titik Jalur 2.")
+                return
+            }
         }
-        if (!path2Config.enabled && path2Markers.none { it.point.isReady }) {
-            toast("Ambil warna dulu untuk minimal satu titik Jalur 2.")
-            return
-        }
-        path2Config = path2Config.copy(enabled = !path2Config.enabled)
+        if (path2Config.enabled == enabled) return
+        path2Config = path2Config.copy(enabled = enabled)
         path2Store.save(path2Config)
+        if (!enabled) {
+            path2Schedule.reset()
+            if (runState == SmartRunState.PATH2) {
+                // Hentikan rangkaian Jalur 2 sekarang juga, lalu lanjutkan macro biasa.
+                finishPath2(runGeneration)
+                toast("Jalur 2 dimatikan. Macro biasa lanjut.")
+            } else {
+                toast("Jalur 2 dimatikan.")
+            }
+        } else {
+            if (runState == SmartRunState.RUNNING) path2ResumeClock()
+            toast("Jalur 2 dinyalakan.")
+        }
+        MacroDiagnostics.record(service, "smart_jalur2_toggle", if (enabled) "on" else "off")
         updateUi()
+    }
+
+    /** Menekan tombol J2 saat macro berjalan = matikan Jalur 2, tanpa menghentikan macro. */
+    private fun handlePath2ButtonPressed() {
+        if (isRunning()) {
+            if (path2Config.enabled) {
+                setPath2Enabled(false)
+            } else {
+                toast("Jalur 2 sedang mati. Macro biasa tetap berjalan.")
+            }
+            return
+        }
+        togglePath2Panel()
     }
 
     private fun changePath2Minutes(delta: Int) {
@@ -1687,7 +1738,9 @@ class SmartOverlayController(
         advancedButton = smallButton("⚙", "Buka atau tutup pengaturan titik") { toggleAdvanced() }.apply {
             textSize = 15f
         }
-        path2Button = smallButton("J2", "Buka atau tutup pengaturan Jalur 2") { togglePath2Panel() }.apply {
+        path2Button = smallButton("J2", "Buka panel Jalur 2; saat berjalan, menekan ini mematikan Jalur 2") {
+            handlePath2ButtonPressed()
+        }.apply {
             textSize = 11f
         }
         selector.addView(prevButton, LinearLayout.LayoutParams(dp(26f), dp(28f)))
@@ -1899,15 +1952,25 @@ class SmartOverlayController(
         playButton.alpha = if (playButton.isEnabled) 1f else 0.4f
         stopButton.alpha = if (stopButton.isEnabled) 1f else 0.4f
         if (::path2ToggleButton.isInitialized) {
-            path2ToggleButton.text = if (path2Config.enabled) "J2 aktif" else "J2 mati"
+            // Warna tombol = keadaan Jalur 2: hijau menyala, abu-abu mati.
+            path2ToggleButton.text = if (path2Config.enabled) "J2 ON" else "J2 OFF"
+            path2ToggleButton.setTextColor(Color.WHITE)
+            path2ToggleButton.background = GradientDrawable().apply {
+                setColor(if (path2Config.enabled) Color.rgb(5, 150, 105) else Color.rgb(71, 85, 105))
+                cornerRadius = dp(10f).toFloat()
+            }
             path2MinutesButton.text = "${path2Config.intervalMinutes} mnt"
             listOf(
-                path2ToggleButton, path2MinutesButton, addPath2Button, removePath2Button,
+                path2MinutesButton, addPath2Button, removePath2Button,
                 path2ColorButton, path2ToleranceButton, path2HoldButton, path2RepeatButton
             ).forEach {
                 it.isEnabled = idle && !capturingColor && pickerView == null
                 it.alpha = if (it.isEnabled) 1f else 0.4f
             }
+            // Saklar utama tetap bisa dipakai saat macro berjalan: mematikan Jalur 2
+            // tidak boleh menunggu macro berhenti, kalau tidak keduanya bisa bentrok.
+            path2ToggleButton.isEnabled = !capturingColor && pickerView == null
+            path2ToggleButton.alpha = if (path2ToggleButton.isEnabled) 1f else 0.4f
             removePath2Button.isEnabled = removePath2Button.isEnabled && path2Markers.isNotEmpty()
             val selectedPath2 = path2Markers.getOrNull(selectedPath2Index)
             listOf(path2ColorButton, path2ToleranceButton, path2HoldButton, path2RepeatButton).forEach {
@@ -1924,9 +1987,14 @@ class SmartOverlayController(
                 path2HoldButton.text = if (selectedPath2.point.isHold) "Tahan" else "Ketuk"
                 path2RepeatButton.text = "×${selectedPath2.point.repeatCount}"
             }
-            path2Button.isEnabled = idle && !capturingColor && pickerView == null
+            // Saat berjalan tombol ini menjadi saklar OFF darurat, jadi harus hidup.
+            path2Button.isEnabled = !capturingColor && pickerView == null
             path2Button.alpha = if (path2Button.isEnabled) 1f else 0.55f
-            path2Button.text = if (path2Config.enabled) "J2✓" else "J2"
+            if (path2Config.enabled) {
+                path2Button.text = "J2✓"
+            } else {
+                path2Button.text = "J2"
+            }
             updatePath2Status()
         }
         val profile = currentProfile

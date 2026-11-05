@@ -3,7 +3,7 @@
   <h1>Rich Clicker Macro</h1>
   <p>Auto clicker dan editor macro multi-aksi untuk Android.</p>
 
-  [![Version](https://img.shields.io/badge/version-0.9.13-4f46e5)](https://github.com/ramax100/Rich_Clicker_Macro/releases/latest)
+  [![Version](https://img.shields.io/badge/version-0.9.14-4f46e5)](https://github.com/ramax100/Rich_Clicker_Macro/releases/latest)
   [![Android](https://img.shields.io/badge/Android-8.0%2B-3DDC84?logo=android)](#persyaratan)
   [![License](https://img.shields.io/badge/license-MIT-blue)](./LICENSE)
   [![Free](https://img.shields.io/badge/price-100%25%20gratis-brightgreen)](#gratis-dan-bebas-dimodifikasi)
@@ -66,13 +66,13 @@ Unduh APK terbaru dari halaman **[GitHub Releases](https://github.com/ramax100/R
 
 Setiap rilis menyertakan dua berkas:
 
-- `Rich-Clicker-Macro-v0.9.13-com.richclickermacro-release.apk` — aplikasinya.
+- `Rich-Clicker-Macro-v0.9.14-com.richclickermacro-release.apk` — aplikasinya.
 - `...apk.sha256` — sidik jari untuk memeriksa unduhan tidak rusak.
 
 Cara memeriksa (opsional, tapi disarankan):
 
 ```bash
-sha256sum Rich-Clicker-Macro-v0.9.13-com.richclickermacro-release.apk
+sha256sum Rich-Clicker-Macro-v0.9.14-com.richclickermacro-release.apk
 ```
 
 Bandingkan hasilnya dengan isi berkas `.sha256`. Kalau berbeda, unduhan tidak utuh —
@@ -189,8 +189,21 @@ sendiri di toolbar-nya.
   muncul, titik itu dilewati agar rangkaian tidak macet.
 - Per titik Jalur 2 ada pengaturan sendiri: **Kepekaan** (1–120), **Ketuk/Tahan**, dan **×ulangan**
   (1–1.000 klik setiap kali warnanya cocok).
-- Mengambil warna pertama yang berhasil otomatis mengaktifkan Jalur 2 (tombol berubah jadi
-  **`J2 aktif`**). Tombol itu bisa mematikannya kembali tanpa menghapus titik.
+- **Saklar `J2 ON` / `J2 OFF`** adalah pengaman utama terhadap bentrok dengan macro biasa.
+  Selama OFF, Jalur 2 **tidak pernah** menyela macro biasa: timernya diam, titiknya diredupkan,
+  dan tidak ada klik tambahan. Tombolnya hijau saat ON dan abu-abu saat OFF, dan keadaannya
+  tersimpan walau aplikasi ditutup.
+  - **Bisa ditekan kapan saja, termasuk saat macro sedang berjalan.** Ini sengaja: mematikan
+    Jalur 2 tidak boleh menunggu macro berhenti.
+  - Kalau Jalur 2 **sedang bekerja** lalu saklar dimatikan, rangkaian Jalur 2 langsung berhenti
+    dan **macro biasa lanjut** tanpa ikut berhenti.
+  - Menekan tombol **`J2`** di toolbar saat macro berjalan juga langsung mematikan Jalur 2 —
+    tombol OFF darurat, tanpa membuka panel.
+  - Menyalakan Jalur 2 memulai hitungan waktunya dari nol, jadi tidak ada sisa waktu lama yang
+    membuatnya tiba-tiba jalan.
+  - Jalur 2 hanya bisa dinyalakan kalau ada minimal satu titik yang sudah punya warna.
+- Mengambil warna pertama yang berhasil otomatis mengaktifkan Jalur 2 (saklar berubah jadi
+  **`J2 ON`**). Saklar itu bisa mematikannya kembali tanpa menghapus titik.
 - Label status di bawah panel selalu menyebut langkah berikutnya, misalnya
   *"Jalur 2 nonaktif • tekan + Titik J2 untuk mulai"*,
   *"Jalur 2 nonaktif • ambil warna dulu (0/1 siap)"*, atau
