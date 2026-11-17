@@ -1366,7 +1366,14 @@ class ClickOverlayController(
         @Suppress("DEPRECATION")
         val rotation = windowManager.defaultDisplay.rotation
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            val bounds = windowManager.currentWindowMetrics.bounds
+            // Markers are laid out in full-display coordinates (FLAG_LAYOUT_IN_SCREEN +
+            // FLAG_LAYOUT_NO_LIMITS + SHORT_EDGES cutout mode) and gestures are dispatched
+            // in full-display pixel space. currentWindowMetrics can EXCLUDE system insets
+            // (status/navigation bar, cutout) on some devices, producing a smaller/offset
+            // frame; the alignment check then rejects the tap or it lands in the wrong
+            // place — so clicks worked on some devices but not others. maximumWindowMetrics
+            // always spans the whole display, matching both the markers and the gesture.
+            val bounds = windowManager.maximumWindowMetrics.bounds
             return ScreenFrame(
                 bounds.left, bounds.top,
                 bounds.width().coerceAtLeast(1), bounds.height().coerceAtLeast(1), rotation
