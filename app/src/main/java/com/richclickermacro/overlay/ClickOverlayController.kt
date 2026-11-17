@@ -1373,7 +1373,13 @@ class ClickOverlayController(
             // frame; the alignment check then rejects the tap or it lands in the wrong
             // place — so clicks worked on some devices but not others. maximumWindowMetrics
             // always spans the whole display, matching both the markers and the gesture.
-            val bounds = windowManager.maximumWindowMetrics.bounds
+            // Fall back to currentWindowMetrics if maximum returns degenerate bounds.
+            val maxBounds = windowManager.maximumWindowMetrics.bounds
+            val bounds = if (maxBounds.width() > 0 && maxBounds.height() > 0) {
+                maxBounds
+            } else {
+                windowManager.currentWindowMetrics.bounds
+            }
             return ScreenFrame(
                 bounds.left, bounds.top,
                 bounds.width().coerceAtLeast(1), bounds.height().coerceAtLeast(1), rotation

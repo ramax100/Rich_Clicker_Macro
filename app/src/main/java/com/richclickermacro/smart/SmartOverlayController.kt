@@ -2919,7 +2919,13 @@ class SmartOverlayController(
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
             // The accessibility screenshot covers the FULL display. currentWindowMetrics
             // can exclude system insets, which shifted every sampled/clicked position.
-            val bounds = windowManager.maximumWindowMetrics.bounds
+            // Fall back to currentWindowMetrics if maximum returns degenerate bounds.
+            val maxBounds = windowManager.maximumWindowMetrics.bounds
+            val bounds = if (maxBounds.width() > 0 && maxBounds.height() > 0) {
+                maxBounds
+            } else {
+                windowManager.currentWindowMetrics.bounds
+            }
             return ScreenFrame(
                 bounds.left, bounds.top,
                 bounds.width().coerceAtLeast(1), bounds.height().coerceAtLeast(1), rotation
