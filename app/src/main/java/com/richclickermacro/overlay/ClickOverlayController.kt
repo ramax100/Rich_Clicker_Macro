@@ -282,7 +282,10 @@ class ClickOverlayController(
             return false
         }
         if (holder.actionType == PointActionType.SWIPE && !addEndpoint(holder, targets.size + 1)) {
-            if (!removeViewSafely(target)) targets.add(holder)
+            // Endpoint failed: roll back the start view and never keep a half-built
+            // SWIPE holder (endView == null) in the list, which would be unusable and
+            // impossible to remove cleanly later.
+            removeViewSafely(target)
             Toast.makeText(service, "Endpoint swipe tidak dapat ditampilkan", Toast.LENGTH_SHORT).show()
             return false
         }
@@ -343,14 +346,21 @@ class ClickOverlayController(
 
         val removed = targets[selectedIndex]
         val endpointRemoved = removed.endView?.let(::removeViewSafely) ?: true
-        if (endpointRemoved) {
-            removed.endView = null
-            removed.endParams = null
-        }
         if (!endpointRemoved || !removeViewSafely(removed.view)) {
+            // Partial removal: keep the holder consistent. If the endpoint is gone but
+            // the start view is still attached, downgrade to TAP so we never leave a
+            // SWIPE holder with a null endView (which the run would reject and that
+            // could not be cleanly removed afterwards).
+            if (endpointRemoved && removed.endView != null) {
+                removed.endView = null
+                removed.endParams = null
+                removed.actionType = PointActionType.TAP
+            }
             Toast.makeText(service, "Titik gagal dihapus. Coba tutup editor.", Toast.LENGTH_SHORT).show()
             return
         }
+        removed.endView = null
+        removed.endParams = null
         targets.removeAt(selectedIndex)
         selectedIndex = selectedIndex.coerceAtMost(targets.lastIndex)
         relabelTargets()
@@ -1356,7 +1366,20 @@ class ClickOverlayController(
         @Suppress("DEPRECATION")
         val rotation = windowManager.defaultDisplay.rotation
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            val bounds = windowManager.currentWindowMetrics.bounds
+            // Markers are laid out in full-display coordinates (FLAG_LAYOUT_IN_SCREEN +
+            // FLAG_LAYOUT_NO_LIMITS + SHORT_EDGES cutout mode) and gestures are dispatched
+            // in full-display pixel space. currentWindowMetrics can EXCLUDE system insets
+            // (status/navigation bar, cutout) on some devices, producing a smaller/offset
+            // frame; the alignment check then rejects the tap or it lands in the wrong
+            // place — so clicks worked on some devices but not others. maximumWindowMetrics
+            // always spans the whole display, matching both the markers and the gesture.
+            // Fall back to currentWindowMetrics if maximum returns degenerate bounds.
+            val maxBounds = windowManager.maximumWindowMetrics.bounds
+            val bounds = if (maxBounds.width() > 0 && maxBounds.height() > 0) {
+                maxBounds
+            } else {
+                windowManager.currentWindowMetrics.bounds
+            }
             return ScreenFrame(
                 bounds.left, bounds.top,
                 bounds.width().coerceAtLeast(1), bounds.height().coerceAtLeast(1), rotation

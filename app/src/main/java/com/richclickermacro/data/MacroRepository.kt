@@ -81,9 +81,12 @@ class MacroRepository(context: Context) {
 
     @Synchronized
     fun deleteProfile(name: String): MacroProfile {
+        val previousActive = preferences.getString(KEY_ACTIVE_PROFILE, null)
         val profiles = getProfiles().filterNot { it.name == name }.toMutableList()
         if (profiles.isEmpty()) profiles.add(createDefaultProfile(DEFAULT_PROFILE_NAME))
-        val active = profiles.first()
+        // Preserve the user's active selection; only move it when the active profile
+        // itself was the one deleted.
+        val active = profiles.firstOrNull { it.name == previousActive } ?: profiles.first()
         writeProfiles(profiles, active.name)
         return active
     }
@@ -111,7 +114,14 @@ class MacroRepository(context: Context) {
             importedCount++
         }
         require(importedCount > 0) { "Tidak ada profil valid di dalam file" }
-        writeProfiles(existing, importedNameMap[exportedActiveName] ?: existing.last().name)
+        // Prefer the imported file's active profile when it maps to a real import.
+        // Otherwise keep whatever the user already had active rather than silently
+        // jumping to the last imported profile.
+        val previousActive = preferences.getString(KEY_ACTIVE_PROFILE, null)
+        val resolvedActive = importedNameMap[exportedActiveName]
+            ?: existing.firstOrNull { it.name == previousActive }?.name
+            ?: existing.first().name
+        writeProfiles(existing, resolvedActive)
         return importedCount
     }
 
