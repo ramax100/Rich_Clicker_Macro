@@ -129,9 +129,12 @@ class SmartRepository(context: Context) {
 
     @Synchronized
     fun deleteProfile(name: String): SmartProfile {
+        val previousActive = preferences.getString(KEY_ACTIVE, null)
         val profiles = getProfiles().filterNot { it.name == name }.toMutableList()
         if (profiles.isEmpty()) profiles.add(defaultProfile(SmartLimits.DEFAULT_PROFILE_NAME))
-        val active = profiles.first()
+        // Preserve the user's active selection; only move it when the active profile
+        // itself was the one deleted.
+        val active = profiles.firstOrNull { it.name == previousActive } ?: profiles.first()
         writeProfiles(profiles, active.name)
         return active
     }
@@ -159,7 +162,14 @@ class SmartRepository(context: Context) {
             count++
         }
         require(count > 0) { "Tidak ada profil smart valid di dalam file" }
-        writeProfiles(existing, activeName ?: existing.last().name)
+        // Prefer the imported file's active profile when it maps to a real import.
+        // Otherwise keep whatever the user already had active rather than silently
+        // jumping to the last imported profile.
+        val previousActive = preferences.getString(KEY_ACTIVE, null)
+        val resolvedActive = activeName
+            ?: existing.firstOrNull { it.name == previousActive }?.name
+            ?: existing.first().name
+        writeProfiles(existing, resolvedActive)
         return count
     }
 

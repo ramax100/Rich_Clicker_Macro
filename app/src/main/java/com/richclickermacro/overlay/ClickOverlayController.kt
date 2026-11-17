@@ -282,7 +282,10 @@ class ClickOverlayController(
             return false
         }
         if (holder.actionType == PointActionType.SWIPE && !addEndpoint(holder, targets.size + 1)) {
-            if (!removeViewSafely(target)) targets.add(holder)
+            // Endpoint failed: roll back the start view and never keep a half-built
+            // SWIPE holder (endView == null) in the list, which would be unusable and
+            // impossible to remove cleanly later.
+            removeViewSafely(target)
             Toast.makeText(service, "Endpoint swipe tidak dapat ditampilkan", Toast.LENGTH_SHORT).show()
             return false
         }
@@ -343,14 +346,21 @@ class ClickOverlayController(
 
         val removed = targets[selectedIndex]
         val endpointRemoved = removed.endView?.let(::removeViewSafely) ?: true
-        if (endpointRemoved) {
-            removed.endView = null
-            removed.endParams = null
-        }
         if (!endpointRemoved || !removeViewSafely(removed.view)) {
+            // Partial removal: keep the holder consistent. If the endpoint is gone but
+            // the start view is still attached, downgrade to TAP so we never leave a
+            // SWIPE holder with a null endView (which the run would reject and that
+            // could not be cleanly removed afterwards).
+            if (endpointRemoved && removed.endView != null) {
+                removed.endView = null
+                removed.endParams = null
+                removed.actionType = PointActionType.TAP
+            }
             Toast.makeText(service, "Titik gagal dihapus. Coba tutup editor.", Toast.LENGTH_SHORT).show()
             return
         }
+        removed.endView = null
+        removed.endParams = null
         targets.removeAt(selectedIndex)
         selectedIndex = selectedIndex.coerceAtMost(targets.lastIndex)
         relabelTargets()
