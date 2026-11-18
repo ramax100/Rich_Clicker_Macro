@@ -67,6 +67,13 @@ class SmartOverlayController(
     private var path2RepeatIndex = 0
     private var selectedPath2Index = -1
     private var isPath2Open = false
+    /**
+     * Jalur 2 "bersenjata": timer sudah jatuh tempo, TAPI J2 belum dimulai karena
+     * harus menunggu Jalur 1 menyelesaikan siklus sampai titik terakhir dulu.
+     */
+    private var path2Armed = false
+    /** Nilai progres J1 (loop untuk SEQUENCE, aksi untuk ANY) saat J2 di-arm. */
+    private var path2ArmedProgress = 0
 
     private var currentProfile: SmartProfile? = null
     /** When the current colour capture started, so a stuck latch can be released. */
@@ -199,6 +206,8 @@ class SmartOverlayController(
         path2Schedule.pause(SystemClock.elapsedRealtime())
         path2Index = 0
         path2RepeatIndex = 0
+        path2Armed = false
+        path2ArmedProgress = 0
         pickForPath2 = false
         reopenPath2AfterPick = false
         removePicker()
@@ -367,6 +376,8 @@ class SmartOverlayController(
         setPath2Touchable(false)
         setPath2Visible(false)
         path2Schedule.reset()
+        path2Armed = false
+        path2ArmedProgress = 0
         path2Index = 0
         applyKeepScreenOn(runnable.keepScreenOn)
         service.startMemorySampling()
@@ -597,13 +608,37 @@ class SmartOverlayController(
         }
     }
 
+    /** Progres Jalur 1: jumlah putaran penuh (SEQUENCE) atau jumlah aksi (ANY). */
+    private fun path2Progress(): Int {
+        val active = engine ?: return 0
+        return if (active.isSequenceMode) active.loopCount else active.actionCount
+    }
+
+    /**
+     * Logika Jalur 2 dua tahap:
+     *  1. Saat timer jatuh tempo, J2 di-"arm" (bersenjata) — TAPI belum mulai. Kita
+     *     catat progres Jalur 1 saat itu.
+     *  2. J2 baru benar-benar mulai setelah Jalur 1 maju satu siklus penuh sejak
+     *     di-arm (SEQUENCE: satu putaran sampai titik terakhir; ANY: satu aksi
+     *     berikutnya). Jadi walau waktunya sudah lewat, J2 tetap menunggu J1
+     *     menuntaskan siklus berjalan lebih dulu.
+     */
     private fun path2Due(): Boolean {
         if (!path2Config.enabled) return false
         if (path2Markers.none { it.point.isReady }) return false
-        // Jalur 2 baru boleh mulai setelah Jalur 1 dianggap selesai satu siklus
-        // penuh (sampai titik terakhir), bukan hanya karena timer jatuh tempo.
-        if (engine?.hasCompletedFirstCycle() != true) return false
-        return path2Schedule.isDue(SystemClock.elapsedRealtime(), path2Config.intervalMs)
+        if (engine == null) return false
+
+        if (!path2Armed) {
+            if (!path2Schedule.isDue(SystemClock.elapsedRealtime(), path2Config.intervalMs)) return false
+            // Timer jatuh tempo: senjatai J2, catat progres J1 sekarang, lalu tunggu.
+            path2Armed = true
+            path2ArmedProgress = path2Progress()
+            MacroDiagnostics.record(service, "smart_jalur2_armed", "progress=$path2ArmedProgress")
+            return false
+        }
+        // Sudah bersenjata: tunggu Jalur 1 menyelesaikan siklusnya (maju minimal
+        // satu putaran/aksi sejak di-arm) baru J2 boleh jalan.
+        return path2Progress() > path2ArmedProgress
     }
 
     private fun path2ResumeClock() {
@@ -1150,6 +1185,8 @@ class SmartOverlayController(
     private fun beginPath2(generation: Long) {
         if (runState != SmartRunState.RUNNING) return
         if (path2Markers.none { it.point.isReady }) return
+        // J2 dimulai: lepas status bersenjata agar siklus arm berikutnya bersih.
+        path2Armed = false
         handler.removeCallbacksAndMessages(null)
         path2Schedule.pause(SystemClock.elapsedRealtime())
         runState = SmartRunState.PATH2
@@ -1325,7 +1362,9 @@ class SmartOverlayController(
         if (generation != runGeneration || runState != SmartRunState.PATH2) return
         path2Index = 0
         path2RepeatIndex = 0
-        // Smart click lanjut; hitungan waktu Jalur 2 dimulai dari nol lagi.
+        // Siklus J2 selesai: reset status bersenjata dan mulai hitung waktu dari nol.
+        path2Armed = false
+        path2ArmedProgress = 0
         path2Schedule.reset()
         path2Schedule.resume(SystemClock.elapsedRealtime())
         runState = SmartRunState.RUNNING
