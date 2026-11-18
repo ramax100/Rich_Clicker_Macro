@@ -92,6 +92,9 @@ class SmartOverlayController(
     private var disposing = false
     private var lastNotice = ""
     private var unreadableScans = 0
+    /** Marker disembunyikan manual oleh pengguna; windownya juga tidak menangkap
+     * sentuhan agar tombol kecil di bawahnya tetap bisa ditekan. */
+    private var markersHidden = false
 
 
     private lateinit var playButton: Button
@@ -101,6 +104,7 @@ class SmartOverlayController(
     private lateinit var prevButton: Button
     private lateinit var nextButton: Button
     private lateinit var advancedButton: Button
+    private lateinit var hideMarkersButton: Button
     private lateinit var statusLabel: TextView
     private lateinit var pointLabel: TextView
     private lateinit var colorSwatch: View
@@ -124,6 +128,7 @@ class SmartOverlayController(
     fun show(profile: SmartProfile) {
         dismissDialog()
         stop("show_profile")
+        markersHidden = false
         if (!removeAllHolders()) {
             toast("Editor smart lama belum bisa dibersihkan.")
             return
@@ -595,6 +600,9 @@ class SmartOverlayController(
     private fun path2Due(): Boolean {
         if (!path2Config.enabled) return false
         if (path2Markers.none { it.point.isReady }) return false
+        // Jalur 2 baru boleh mulai setelah Jalur 1 dianggap selesai satu siklus
+        // penuh (sampai titik terakhir), bukan hanya karena timer jatuh tempo.
+        if (engine?.hasCompletedFirstCycle() != true) return false
         return path2Schedule.isDue(SystemClock.elapsedRealtime(), path2Config.intervalMs)
     }
 
@@ -809,8 +817,9 @@ class SmartOverlayController(
     }
 
     private fun setPath2Visible(visible: Boolean) {
+        val effectiveVisible = visible && !markersHidden
         path2Markers.forEach { holder ->
-            holder.view.visibility = if (visible) View.VISIBLE else View.INVISIBLE
+            holder.view.visibility = if (effectiveVisible) View.VISIBLE else View.INVISIBLE
         }
     }
 
@@ -821,9 +830,10 @@ class SmartOverlayController(
     }
 
     private fun setPath2Touchable(touchable: Boolean) {
+        val effectiveTouchable = touchable && !markersHidden
         path2Markers.forEach { holder ->
-            holder.params.flags = touchFlags(holder.params.flags, touchable)
-            holder.params.alpha = if (touchable) 1f else 0.7f
+            holder.params.flags = touchFlags(holder.params.flags, effectiveTouchable)
+            holder.params.alpha = if (effectiveTouchable) 1f else 0.7f
             runCatching { windowManager.updateViewLayout(holder.view, holder.params) }
         }
     }
@@ -1755,6 +1765,9 @@ class SmartOverlayController(
         advancedButton = smallButton("⚙", "Buka atau tutup pengaturan titik") { toggleAdvanced() }.apply {
             setTextSize(android.util.TypedValue.COMPLEX_UNIT_DIP, 15f)
         }
+        hideMarkersButton = smallButton("◉", "Sembunyikan atau tampilkan titik") { toggleMarkers() }.apply {
+            setTextSize(android.util.TypedValue.COMPLEX_UNIT_DIP, 13f)
+        }
         path2Button = smallButton("J2", "Buka panel Jalur 2; saat berjalan, menekan ini mematikan Jalur 2") {
             handlePath2ButtonPressed()
         }.apply {
@@ -1767,6 +1780,7 @@ class SmartOverlayController(
             marginStart = dp(4f); marginEnd = dp(4f)
         })
         selector.addView(path2Button, LinearLayout.LayoutParams(dp(30f), dp(28f)).apply { marginEnd = dp(2f) })
+        selector.addView(hideMarkersButton, LinearLayout.LayoutParams(dp(28f), dp(28f)).apply { marginEnd = dp(2f) })
         selector.addView(advancedButton, LinearLayout.LayoutParams(dp(28f), dp(28f)))
         content.addView(selector, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(28f)).apply {
             topMargin = dp(2f)
@@ -1967,6 +1981,13 @@ class SmartOverlayController(
         ).forEach {
             it.isEnabled = idle && !capturingColor && pickerView == null
             it.alpha = if (it.isEnabled) 1f else 0.4f
+        }
+        // Tombol sembunyikan titik boleh dipakai kapan saja (termasuk saat berjalan),
+        // karena tujuannya agar tombol kecil di bawah marker bisa ditekan.
+        if (::hideMarkersButton.isInitialized) {
+            hideMarkersButton.isEnabled = pickerView == null && !capturingColor
+            hideMarkersButton.alpha = if (hideMarkersButton.isEnabled) 1f else 0.4f
+            updateHideMarkersButton()
         }
         playButton.alpha = if (playButton.isEnabled) 1f else 0.4f
         stopButton.alpha = if (stopButton.isEnabled) 1f else 0.4f
@@ -2819,17 +2840,46 @@ class SmartOverlayController(
     }
 
     private fun setMarkersVisible(visible: Boolean) {
+        // Jika pengguna menyembunyikan marker secara manual, jangan tampilkan lagi
+        // meski pemanggil meminta visible (mis. saat run berhenti).
+        val effectiveVisible = visible && !markersHidden
         holders.forEach { holder ->
-            holder.watchView.visibility = if (visible) View.VISIBLE else View.INVISIBLE
+            holder.watchView.visibility = if (effectiveVisible) View.VISIBLE else View.INVISIBLE
         }
     }
 
     private fun setMarkersTouchable(touchable: Boolean) {
+        // Marker yang disembunyikan manual harus pass-through agar tombol kecil di
+        // bawahnya bisa ditekan, apa pun yang diminta pemanggil.
+        val effectiveTouchable = touchable && !markersHidden
         holders.forEach { holder ->
-            holder.watchParams.flags = touchFlags(holder.watchParams.flags, touchable)
-            holder.watchParams.alpha = if (touchable) 1f else 0.7f
+            holder.watchParams.flags = touchFlags(holder.watchParams.flags, effectiveTouchable)
+            holder.watchParams.alpha = if (effectiveTouchable) 1f else 0.7f
             runCatching { windowManager.updateViewLayout(holder.watchView, holder.watchParams) }
         }
+    }
+
+    /**
+     * Sembunyikan/tampilkan marker kapan saja (tidak hanya saat mulai). Saat
+     * tersembunyi, window marker juga dibuat pass-through sehingga tombol kecil di
+     * bawahnya tetap bisa ditekan.
+     */
+    private fun toggleMarkers() {
+        markersHidden = !markersHidden
+        setMarkersVisible(true)
+        setMarkersTouchable(true)
+        setPath2Visible(true)
+        setPath2Touchable(true)
+        updateHideMarkersButton()
+        toast(if (markersHidden) "Titik disembunyikan." else "Titik ditampilkan.")
+        MacroDiagnostics.record(service, "smart_markers_hidden", markersHidden.toString())
+    }
+
+    private fun updateHideMarkersButton() {
+        if (!::hideMarkersButton.isInitialized) return
+        hideMarkersButton.text = if (markersHidden) "◌" else "◉"
+        hideMarkersButton.contentDescription =
+            if (markersHidden) "Tampilkan titik" else "Sembunyikan titik"
     }
 
     private fun touchFlags(flags: Int, touchable: Boolean): Int = if (touchable) {
