@@ -404,7 +404,7 @@ class ClickOverlayController(
         val headerRow = horizontalRow()
         val handle = TextView(service).apply {
             text = "⋮⋮ MACRO ▴"
-            textSize = 11f
+            setTextSize(android.util.TypedValue.COMPLEX_UNIT_DIP, 11f)
             maxLines = 1
             gravity = Gravity.CENTER_VERTICAL
             setTextColor(Color.rgb(203, 213, 225))
@@ -416,7 +416,7 @@ class ClickOverlayController(
         }
         compactStopButton = Button(service).apply {
             text = "STOP"
-            textSize = 9f
+            setTextSize(android.util.TypedValue.COMPLEX_UNIT_DIP, 9f)
             isAllCaps = false
             setTextColor(Color.WHITE)
             setTypeface(typeface, Typeface.BOLD)
@@ -429,7 +429,7 @@ class ClickOverlayController(
             setOnClickListener { stopClicking() }
         }
         val closeButton = controlButton("×", "Tutup editor macro") { destroy() }.apply {
-            textSize = 16f
+            setTextSize(android.util.TypedValue.COMPLEX_UNIT_DIP, 16f)
             minimumWidth = dp(28f); minWidth = dp(28f)
             minimumHeight = dp(28f); minHeight = dp(28f)
             setPadding(0, 0, 0, 0)
@@ -444,7 +444,7 @@ class ClickOverlayController(
         val primaryRow = horizontalRow()
         playButton = controlButton("▶", "Mulai macro") { startClicking() }
         stopButton = controlButton("STOP", "Hentikan macro") { stopClicking() }.apply {
-            textSize = 10f
+            setTextSize(android.util.TypedValue.COMPLEX_UNIT_DIP, 10f)
             isAllCaps = false
             setTypeface(typeface, Typeface.BOLD)
             background = stopBackground()
@@ -459,10 +459,10 @@ class ClickOverlayController(
         val utilityRow = horizontalRow()
         markerVisibilityButton = controlButton("◉", "Sembunyikan atau tampilkan marker") { toggleMarkers() }
         advancedButton = controlButton("⚙ Atur", "Buka atau tutup pengaturan titik") { toggleAdvanced() }.apply {
-            textSize = 11f; isAllCaps = false
+            setTextSize(android.util.TypedValue.COMPLEX_UNIT_DIP, 11f); isAllCaps = false
         }
         compactStatus = TextView(service).apply {
-            textSize = 10f
+            setTextSize(android.util.TypedValue.COMPLEX_UNIT_DIP, 10f)
             gravity = Gravity.CENTER
             maxLines = 1
             setTextColor(Color.rgb(203, 213, 225))
@@ -482,7 +482,7 @@ class ClickOverlayController(
         moveUpButton = controlButton("↑", "Naikkan urutan titik") { moveSelectedPoint(-1) }
         moveDownButton = controlButton("↓", "Turunkan urutan titik") { moveSelectedPoint(1) }
         delayLabel = TextView(service).apply {
-            textSize = 11f
+            setTextSize(android.util.TypedValue.COMPLEX_UNIT_DIP, 11f)
             gravity = Gravity.CENTER
             maxLines = 1
             setTextColor(Color.WHITE)
@@ -1431,7 +1431,7 @@ class ClickOverlayController(
 
     private fun controlButton(symbol: String, description: String, action: () -> Unit) = Button(service).apply {
         text = symbol
-        textSize = 15f
+        setTextSize(android.util.TypedValue.COMPLEX_UNIT_DIP, 15f)
         setTextColor(Color.WHITE)
         contentDescription = description
         minimumWidth = 0
@@ -1445,7 +1445,7 @@ class ClickOverlayController(
 
     private fun settingButton(value: String, description: String, action: () -> Unit) = Button(service).apply {
         text = value
-        textSize = 10f
+        setTextSize(android.util.TypedValue.COMPLEX_UNIT_DIP, 10f)
         isAllCaps = false
         setTextColor(Color.WHITE)
         contentDescription = description
@@ -1460,7 +1460,7 @@ class ClickOverlayController(
 
     private fun delayButton(textValue: String, description: String, deltaMs: Long) = Button(service).apply {
         text = textValue
-        textSize = 11f
+        setTextSize(android.util.TypedValue.COMPLEX_UNIT_DIP, 11f)
         isAllCaps = false
         setTextColor(Color.WHITE)
         contentDescription = description
