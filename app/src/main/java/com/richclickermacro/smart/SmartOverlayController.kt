@@ -325,10 +325,11 @@ class SmartOverlayController(
                 return
             }
         }
-        val duplicated = findTooClosePair(runnable)
-        if (duplicated != null) {
-            toast("Titik $duplicated terlalu berdekatan dan akan membaca area yang sama.")
-            return
+        // Titik yang bertumpuk/berdekatan DIBOLEHKAN: ini dipakai sengaja untuk
+        // mengeklik satu tombol kecil beberapa kali lewat beberapa titik. Dulu ini
+        // ditolak; sekarang hanya dicatat agar tetap terlacak, tanpa menghalangi.
+        findTooClosePair(runnable)?.let {
+            MacroDiagnostics.record(service, "smart_points_overlap_allowed", it)
         }
         if (path2Config.enabled) {
             val blockedPath2 = findPath2UnderToolbar()
