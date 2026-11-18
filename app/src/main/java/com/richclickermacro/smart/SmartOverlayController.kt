@@ -400,6 +400,15 @@ class SmartOverlayController(
 
     private fun scan(generation: Long) {
         if (generation != runGeneration || runState != SmartRunState.RUNNING) return
+        // Jaminan: selama macro berjalan dan Jalur 2 menyala dengan titik siap,
+        // jam Jalur 2 harus berjalan. Ini menutup celah urutan (mis. Jalur 2
+        // dinyalakan di saat transisi) yang membuat timer tidak pernah mulai dan
+        // Jalur 2 "tidak pernah jatuh tempo". resume() bersifat idempoten.
+        if (path2Config.enabled && !path2Schedule.isRunning &&
+            path2Markers.any { it.point.isReady }
+        ) {
+            path2Schedule.resume(SystemClock.elapsedRealtime())
+        }
         // Jalur 2 diperiksa di detak loop smart: murni waktu, tanpa membaca warna.
         if (path2Due()) {
             beginPath2(generation)
@@ -3255,7 +3264,7 @@ private class SmartMarkerView(context: Context) : View(context) {
         super.onDraw(canvas)
         val cx = width / 2f
         val cy = height / 2f
-        val radius = 12f * density
+        val radius = 8.5f * density
         paint.style = Paint.Style.FILL
         paint.color = when {
             isDisabledPoint -> Color.rgb(100, 116, 139)
@@ -3281,7 +3290,7 @@ private class SmartMarkerView(context: Context) : View(context) {
             canvas.drawCircle(cx, cy, radius * 0.7f, paint)
         }
         canvas.drawCircle(cx, cy, radius, stroke)
-        val extent = 17f * density
+        val extent = 13f * density
         canvas.drawLine(cx - extent, cy, cx - radius, cy, stroke)
         canvas.drawLine(cx + radius, cy, cx + extent, cy, stroke)
         canvas.drawLine(cx, cy - extent, cx, cy - radius, stroke)

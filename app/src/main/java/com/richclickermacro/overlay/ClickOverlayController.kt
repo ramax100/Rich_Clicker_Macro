@@ -1601,7 +1601,7 @@ private class MacroTargetView(context: Context) : View(context) {
         super.onDraw(canvas)
         val centerX = width / 2f
         val centerY = height / 2f
-        val radius = (if (isMacroRunning) 8f else 11f) * density
+        val radius = (if (isMacroRunning) 6f else 8f) * density
         fillPaint.color = when {
             isActivePoint -> Color.rgb(34, 197, 94)
             isEndpoint -> Color.rgb(14, 165, 233)
@@ -1613,7 +1613,7 @@ private class MacroTargetView(context: Context) : View(context) {
         canvas.drawCircle(centerX, centerY, radius, fillPaint)
         canvas.drawCircle(centerX, centerY, radius, strokePaint)
 
-        val extent = 16f * density
+        val extent = 12f * density
         canvas.drawLine(centerX - extent, centerY, centerX - radius, centerY, strokePaint)
         canvas.drawLine(centerX + radius, centerY, centerX + extent, centerY, strokePaint)
         canvas.drawLine(centerX, centerY - extent, centerX, centerY - radius, strokePaint)
