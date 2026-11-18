@@ -68,16 +68,8 @@ class SmartEngine(profile: SmartProfile) {
     val actionCount: Int get() = totalActions
     val loopCount: Int get() = completedLoops
 
-    /**
-     * Benar bila Jalur 1 sudah menjalankan satu siklus penuh. Jalur 2 memakai ini
-     * supaya tidak mulai sebelum J1 dianggap selesai sampai titik terakhir.
-     *  - SEQUENCE: satu putaran penuh (1 -> titik terakhir) sudah selesai.
-     *  - ANY: tidak ada "titik terakhir" yang pasti, jadi cukup minimal satu aksi
-     *    terkirim agar J2 tidak terkunci selamanya di mode ini.
-     */
-    fun hasCompletedFirstCycle(): Boolean =
-        if (sanitized.orderMode == SmartOrderMode.SEQUENCE) completedLoops >= 1
-        else totalActions >= 1
+    /** True di mode berurutan (SEQUENCE), tempat konsep "titik terakhir" berlaku. */
+    val isSequenceMode: Boolean get() = sanitized.orderMode == SmartOrderMode.SEQUENCE
 
     private class PointState {
         var baseline: Int? = null
