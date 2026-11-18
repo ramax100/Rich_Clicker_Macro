@@ -74,6 +74,8 @@ class SmartOverlayController(
     private var path2Armed = false
     /** Nilai progres J1 (loop untuk SEQUENCE, aksi untuk ANY) saat J2 di-arm. */
     private var path2ArmedProgress = 0
+    /** Kapan J2 di-arm (elapsedRealtime), untuk jaring pengaman anti-macet. */
+    private var path2ArmedAtMs = 0L
 
     private var currentProfile: SmartProfile? = null
     /** When the current colour capture started, so a stuck latch can be released. */
@@ -208,6 +210,7 @@ class SmartOverlayController(
         path2RepeatIndex = 0
         path2Armed = false
         path2ArmedProgress = 0
+        path2ArmedAtMs = 0L
         pickForPath2 = false
         reopenPath2AfterPick = false
         removePicker()
@@ -378,6 +381,7 @@ class SmartOverlayController(
         path2Schedule.reset()
         path2Armed = false
         path2ArmedProgress = 0
+        path2ArmedAtMs = 0L
         path2Index = 0
         applyKeepScreenOn(runnable.keepScreenOn)
         service.startMemorySampling()
@@ -615,30 +619,39 @@ class SmartOverlayController(
     }
 
     /**
-     * Logika Jalur 2 dua tahap:
+     * Logika Jalur 2 dua tahap, dengan jaring pengaman anti-macet:
      *  1. Saat timer jatuh tempo, J2 di-"arm" (bersenjata) — TAPI belum mulai. Kita
-     *     catat progres Jalur 1 saat itu.
-     *  2. J2 baru benar-benar mulai setelah Jalur 1 maju satu siklus penuh sejak
-     *     di-arm (SEQUENCE: satu putaran sampai titik terakhir; ANY: satu aksi
-     *     berikutnya). Jadi walau waktunya sudah lewat, J2 tetap menunggu J1
-     *     menuntaskan siklus berjalan lebih dulu.
+     *     catat progres dan waktu Jalur 1 saat itu.
+     *  2. J2 jalan saat Jalur 1 menuntaskan siklusnya (SEQUENCE: maju satu putaran
+     *     sampai titik terakhir; ANY: satu aksi berikutnya) — di kondisi NORMAL.
+     *  3. Jaring pengaman: bila Jalur 1 MANDEK (mis. layar pindah ke area lain
+     *     sehingga titik J1 tak pernah menemukan warnanya, jadi loopCount tak naik),
+     *     J2 TETAP dijalankan setelah tenggang [PATH2_ARM_GRACE_MS]. Tanpa ini, J2
+     *     tidak pernah jalan saat J1 tidak berputar.
      */
     private fun path2Due(): Boolean {
         if (!path2Config.enabled) return false
         if (path2Markers.none { it.point.isReady }) return false
         if (engine == null) return false
 
+        val now = SystemClock.elapsedRealtime()
         if (!path2Armed) {
-            if (!path2Schedule.isDue(SystemClock.elapsedRealtime(), path2Config.intervalMs)) return false
-            // Timer jatuh tempo: senjatai J2, catat progres J1 sekarang, lalu tunggu.
+            if (!path2Schedule.isDue(now, path2Config.intervalMs)) return false
+            // Timer jatuh tempo: senjatai J2, catat progres & waktu J1, lalu tunggu.
             path2Armed = true
             path2ArmedProgress = path2Progress()
+            path2ArmedAtMs = now
             MacroDiagnostics.record(service, "smart_jalur2_armed", "progress=$path2ArmedProgress")
             return false
         }
-        // Sudah bersenjata: tunggu Jalur 1 menyelesaikan siklusnya (maju minimal
-        // satu putaran/aksi sejak di-arm) baru J2 boleh jalan.
-        return path2Progress() > path2ArmedProgress
+        // Kondisi normal: J1 sudah menuntaskan satu siklus sejak di-arm.
+        if (path2Progress() > path2ArmedProgress) return true
+        // Jaring pengaman: J1 mandek (mis. di area lain) → jalankan J2 agar tidak macet.
+        if (now - path2ArmedAtMs >= PATH2_ARM_GRACE_MS) {
+            MacroDiagnostics.record(service, "smart_jalur2_grace_release", "waited=${now - path2ArmedAtMs}")
+            return true
+        }
+        return false
     }
 
     private fun path2ResumeClock() {
@@ -1365,6 +1378,7 @@ class SmartOverlayController(
         // Siklus J2 selesai: reset status bersenjata dan mulai hitung waktu dari nol.
         path2Armed = false
         path2ArmedProgress = 0
+        path2ArmedAtMs = 0L
         path2Schedule.reset()
         path2Schedule.resume(SystemClock.elapsedRealtime())
         runState = SmartRunState.RUNNING
@@ -3236,6 +3250,14 @@ class SmartOverlayController(
          * seluruh rangkaian Jalur 2.
          */
         private const val PATH2_MATCH_TIMEOUT_MS = 20_000L
+
+        /**
+         * Setelah timer Jalur 2 jatuh tempo, J2 menunggu Jalur 1 menuntaskan satu
+         * siklus. Tetapi bila Jalur 1 mandek (mis. layar pindah ke area lain dan
+         * titik J1 tak kunjung menemukan warnanya), penantian dibatasi tenggang ini
+         * agar J2 tetap jalan dan tidak terlihat macet.
+         */
+        private const val PATH2_ARM_GRACE_MS = 3_000L
 
         /** Jeda bawaan antar titik Jalur 2 yang baru ditambahkan dari editor smart. */
         private const val DEFAULT_PATH2_GAP_MS = 1_000L
