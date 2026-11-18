@@ -325,10 +325,11 @@ class SmartOverlayController(
                 return
             }
         }
-        val duplicated = findTooClosePair(runnable)
-        if (duplicated != null) {
-            toast("Titik $duplicated terlalu berdekatan dan akan membaca area yang sama.")
-            return
+        // Titik yang bertumpuk/berdekatan DIBOLEHKAN: ini dipakai sengaja untuk
+        // mengeklik satu tombol kecil beberapa kali lewat beberapa titik. Dulu ini
+        // ditolak; sekarang hanya dicatat agar tetap terlacak, tanpa menghalangi.
+        findTooClosePair(runnable)?.let {
+            MacroDiagnostics.record(service, "smart_points_overlap_allowed", it)
         }
         if (path2Config.enabled) {
             val blockedPath2 = findPath2UnderToolbar()
@@ -400,6 +401,15 @@ class SmartOverlayController(
 
     private fun scan(generation: Long) {
         if (generation != runGeneration || runState != SmartRunState.RUNNING) return
+        // Jaminan: selama macro berjalan dan Jalur 2 menyala dengan titik siap,
+        // jam Jalur 2 harus berjalan. Ini menutup celah urutan (mis. Jalur 2
+        // dinyalakan di saat transisi) yang membuat timer tidak pernah mulai dan
+        // Jalur 2 "tidak pernah jatuh tempo". resume() bersifat idempoten.
+        if (path2Config.enabled && !path2Schedule.isRunning &&
+            path2Markers.any { it.point.isReady }
+        ) {
+            path2Schedule.resume(SystemClock.elapsedRealtime())
+        }
         // Jalur 2 diperiksa di detak loop smart: murni waktu, tanpa membaca warna.
         if (path2Due()) {
             beginPath2(generation)
@@ -1682,7 +1692,7 @@ class SmartOverlayController(
         val header = row()
         val handle = TextView(service).apply {
             text = "⋮⋮ SMART ▴"
-            textSize = 11f
+            setTextSize(android.util.TypedValue.COMPLEX_UNIT_DIP, 11f)
             maxLines = 1
             gravity = Gravity.CENTER_VERTICAL
             setTextColor(Color.rgb(167, 243, 208))
@@ -1696,7 +1706,7 @@ class SmartOverlayController(
             background = stopBackground()
             visibility = View.GONE
         }
-        val close = smallButton("×", "Tutup editor smart") { destroy() }.apply { textSize = 16f }
+        val close = smallButton("×", "Tutup editor smart") { destroy() }.apply { setTextSize(android.util.TypedValue.COMPLEX_UNIT_DIP, 16f) }
         attachToolbarDrag(handle)
         header.addView(handle, LinearLayout.LayoutParams(0, dp(28f), 1f))
         header.addView(compactStopButton, LinearLayout.LayoutParams(dp(46f), dp(28f)).apply { marginStart = dp(3f) })
@@ -1722,7 +1732,7 @@ class SmartOverlayController(
         // Row 2: one tap to place a point AND read its colour. No dragging needed.
         addButton = filledButton("＋ Ketuk Titik di Layar", "Tandai titik dengan mengetuk layar", Color.rgb(13, 148, 136)) {
             startPick()
-        }.apply { textSize = 12f }
+        }.apply { setTextSize(android.util.TypedValue.COMPLEX_UNIT_DIP, 12f) }
         content.addView(addButton, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(34f)).apply {
             topMargin = dp(3f)
         })
@@ -1731,7 +1741,7 @@ class SmartOverlayController(
         val selector = row()
         prevButton = smallButton("‹", "Titik sebelumnya") { selectDelta(-1) }
         pointLabel = TextView(service).apply {
-            textSize = 11f
+            setTextSize(android.util.TypedValue.COMPLEX_UNIT_DIP, 11f)
             gravity = Gravity.CENTER
             maxLines = 1
             setTextColor(Color.rgb(226, 232, 240))
@@ -1743,12 +1753,12 @@ class SmartOverlayController(
             setOnClickListener { if (!isRunning()) editHexColor() }
         }
         advancedButton = smallButton("⚙", "Buka atau tutup pengaturan titik") { toggleAdvanced() }.apply {
-            textSize = 15f
+            setTextSize(android.util.TypedValue.COMPLEX_UNIT_DIP, 15f)
         }
         path2Button = smallButton("J2", "Buka panel Jalur 2; saat berjalan, menekan ini mematikan Jalur 2") {
             handlePath2ButtonPressed()
         }.apply {
-            textSize = 11f
+            setTextSize(android.util.TypedValue.COMPLEX_UNIT_DIP, 11f)
         }
         selector.addView(prevButton, LinearLayout.LayoutParams(dp(26f), dp(28f)))
         selector.addView(pointLabel, LinearLayout.LayoutParams(0, dp(28f), 1f))
@@ -1764,7 +1774,7 @@ class SmartOverlayController(
 
         // Always tells the user what to do next, in plain words.
         guideLabel = TextView(service).apply {
-            textSize = 10f
+            setTextSize(android.util.TypedValue.COMPLEX_UNIT_DIP, 10f)
             gravity = Gravity.CENTER
             maxLines = 2
             setTextColor(Color.rgb(167, 243, 208))
@@ -1772,7 +1782,7 @@ class SmartOverlayController(
         }
         content.addView(guideLabel, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT))
         statusLabel = TextView(service).apply {
-            textSize = 10f
+            setTextSize(android.util.TypedValue.COMPLEX_UNIT_DIP, 10f)
             gravity = Gravity.CENTER
             maxLines = 1
             setTextColor(Color.rgb(203, 213, 225))
@@ -1790,11 +1800,11 @@ class SmartOverlayController(
         }
         val path2TimeRow = row()
         path2ToggleButton = smallButton("J2", "Aktifkan atau matikan Jalur 2") { togglePath2Enabled() }.apply {
-            textSize = 10f
+            setTextSize(android.util.TypedValue.COMPLEX_UNIT_DIP, 10f)
         }
         val path2Minus = smallButton("−", "Kurangi waktu Jalur 2 satu menit") { changePath2Minutes(-1) }
         path2MinutesButton = smallButton("10 mnt", "Ketuk untuk mengetik waktu Jalur 2") { editPath2Minutes() }.apply {
-            textSize = 10f
+            setTextSize(android.util.TypedValue.COMPLEX_UNIT_DIP, 10f)
         }
         val path2Plus = smallButton("+", "Tambah waktu Jalur 2 satu menit") { changePath2Minutes(1) }
         path2TimeRow.addView(path2ToggleButton, LinearLayout.LayoutParams(0, dp(28f), 1f))
@@ -1805,11 +1815,11 @@ class SmartOverlayController(
 
         val path2PointRow = row()
         addPath2Button = smallButton("+ Titik J2", "Tambah titik Jalur 2") { addNewPath2Marker() }.apply {
-            textSize = 10f
+            setTextSize(android.util.TypedValue.COMPLEX_UNIT_DIP, 10f)
         }
         removePath2Button = smallButton("− Titik J2", "Hapus titik Jalur 2 terpilih") {
             removeSelectedPath2Marker()
-        }.apply { textSize = 10f }
+        }.apply { setTextSize(android.util.TypedValue.COMPLEX_UNIT_DIP, 10f) }
         path2PointRow.addView(addPath2Button, LinearLayout.LayoutParams(0, dp(28f), 1f).apply { marginEnd = dp(2f) })
         path2PointRow.addView(removePath2Button, LinearLayout.LayoutParams(0, dp(28f), 1f))
         path2Panel.addView(path2PointRow, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(28f)))
@@ -1817,7 +1827,7 @@ class SmartOverlayController(
         // Warna pixel: inti cara kerja Jalur 2 di mode smart.
         path2ColorButton = smallButton("Ambil Warna J2", "Baca warna pixel di titik Jalur 2 terpilih") {
             capturePath2Color()
-        }.apply { textSize = 11f }
+        }.apply { setTextSize(android.util.TypedValue.COMPLEX_UNIT_DIP, 11f) }
         path2Panel.addView(path2ColorButton, LinearLayout.LayoutParams(
             LinearLayout.LayoutParams.MATCH_PARENT, dp(30f)
         ).apply { topMargin = dp(2f) })
@@ -1825,13 +1835,13 @@ class SmartOverlayController(
         val path2SettingRow = row()
         path2ToleranceButton = smallButton("Kepekaan", "Atur kepekaan warna titik Jalur 2") {
             editPath2Tolerance()
-        }.apply { textSize = 10f }
+        }.apply { setTextSize(android.util.TypedValue.COMPLEX_UNIT_DIP, 10f) }
         path2HoldButton = smallButton("Ketuk", "Ubah ketuk atau tahan untuk titik Jalur 2") {
             togglePath2Hold()
-        }.apply { textSize = 10f }
+        }.apply { setTextSize(android.util.TypedValue.COMPLEX_UNIT_DIP, 10f) }
         path2RepeatButton = smallButton("×1", "Atur jumlah klik titik Jalur 2") {
             cyclePath2Repeat()
-        }.apply { textSize = 10f }
+        }.apply { setTextSize(android.util.TypedValue.COMPLEX_UNIT_DIP, 10f) }
         listOf(path2ToleranceButton, path2HoldButton, path2RepeatButton).forEach {
             path2SettingRow.addView(it, LinearLayout.LayoutParams(0, dp(28f), 1f).apply {
                 marginStart = dp(1f); marginEnd = dp(1f)
@@ -1840,7 +1850,7 @@ class SmartOverlayController(
         path2Panel.addView(path2SettingRow, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(28f)))
 
         path2StatusLabel = TextView(service).apply {
-            textSize = 9f
+            setTextSize(android.util.TypedValue.COMPLEX_UNIT_DIP, 9f)
             maxLines = 1
             gravity = Gravity.CENTER
             setTextColor(Color.rgb(254, 215, 170))
@@ -1856,14 +1866,14 @@ class SmartOverlayController(
         }
         pointSettingsButton = filledButton(
             "Atur Titik Ini", "Pengaturan titik terpilih", Color.rgb(13, 148, 136)
-        ) { showPointSettings() }.apply { textSize = 12f }
+        ) { showPointSettings() }.apply { setTextSize(android.util.TypedValue.COMPLEX_UNIT_DIP, 12f) }
         advanced.addView(pointSettingsButton, LinearLayout.LayoutParams(
             LinearLayout.LayoutParams.MATCH_PARENT, dp(34f)
         ).apply { topMargin = dp(3f) })
 
         val runBtn = filledButton(
             "Loop & Kecepatan", "Atur loop dan kecepatan untuk semua titik", Color.rgb(71, 85, 105)
-        ) { showRunOptions() }.apply { textSize = 12f }
+        ) { showRunOptions() }.apply { setTextSize(android.util.TypedValue.COMPLEX_UNIT_DIP, 12f) }
         advanced.addView(runBtn, LinearLayout.LayoutParams(
             LinearLayout.LayoutParams.MATCH_PARENT, dp(34f)
         ).apply { topMargin = dp(3f) })
@@ -1871,7 +1881,7 @@ class SmartOverlayController(
 
         val testBtn = filledButton(
             "Tes Klik Titik Ini", "Coba satu klik untuk memeriksa posisi", Color.rgb(180, 83, 9)
-        ) { testClickSelected() }.apply { textSize = 12f }
+        ) { testClickSelected() }.apply { setTextSize(android.util.TypedValue.COMPLEX_UNIT_DIP, 12f) }
         advanced.addView(testBtn, LinearLayout.LayoutParams(
             LinearLayout.LayoutParams.MATCH_PARENT, dp(34f)
         ).apply { topMargin = dp(3f) })
@@ -2086,7 +2096,7 @@ class SmartOverlayController(
             } else {
                 "Ketuk bagian layar yang mau DIKLIK"
             }
-            textSize = 13f
+            setTextSize(android.util.TypedValue.COMPLEX_UNIT_DIP, 13f)
             setTextColor(Color.WHITE)
             gravity = Gravity.CENTER
             setTypeface(typeface, Typeface.BOLD)
@@ -2247,20 +2257,20 @@ class SmartOverlayController(
             val head = LinearLayout(service).apply { orientation = LinearLayout.HORIZONTAL }
             head.addView(TextView(service).apply {
                 text = title
-                textSize = 14f
+                setTextSize(android.util.TypedValue.COMPLEX_UNIT_DIP, 14f)
                 setTextColor(Color.rgb(15, 23, 42))
                 setTypeface(typeface, Typeface.BOLD)
             }, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
             head.addView(TextView(service).apply {
                 text = value
-                textSize = 14f
+                setTextSize(android.util.TypedValue.COMPLEX_UNIT_DIP, 14f)
                 setTextColor(Color.rgb(13, 148, 136))
                 setTypeface(typeface, Typeface.BOLD)
             })
             addView(head)
             addView(TextView(service).apply {
                 text = explanation
-                textSize = 12f
+                setTextSize(android.util.TypedValue.COMPLEX_UNIT_DIP, 12f)
                 setTextColor(Color.rgb(71, 85, 105))
                 setPadding(0, dp(3f), 0, 0)
             })
@@ -2498,7 +2508,7 @@ class SmartOverlayController(
 
     private fun sectionLabel(text: String) = TextView(service).apply {
         this.text = text
-        textSize = 12f
+        setTextSize(android.util.TypedValue.COMPLEX_UNIT_DIP, 12f)
         setTypeface(typeface, Typeface.BOLD)
         setTextColor(Color.rgb(13, 148, 136))
         setPadding(dp(4f), dp(8f), 0, dp(3f))
@@ -3013,7 +3023,7 @@ class SmartOverlayController(
 
     private fun smallButton(textValue: String, description: String, action: () -> Unit) = Button(service).apply {
         text = textValue
-        textSize = 12f
+        setTextSize(android.util.TypedValue.COMPLEX_UNIT_DIP, 12f)
         isAllCaps = false
         setTextColor(Color.WHITE)
         contentDescription = description
@@ -3032,7 +3042,7 @@ class SmartOverlayController(
     private fun filledButton(textValue: String, description: String, fill: Int, action: () -> Unit) =
         Button(service).apply {
             text = textValue
-            textSize = 13f
+            setTextSize(android.util.TypedValue.COMPLEX_UNIT_DIP, 13f)
             isAllCaps = false
             setTextColor(Color.WHITE)
             setTypeface(typeface, Typeface.BOLD)
@@ -3050,7 +3060,7 @@ class SmartOverlayController(
         }
 
     private fun settingButton(textValue: String, description: String, action: () -> Unit) =
-        smallButton(textValue, description, action).apply { textSize = 10f }
+        smallButton(textValue, description, action).apply { setTextSize(android.util.TypedValue.COMPLEX_UNIT_DIP, 10f) }
 
     private fun panelBackground() = GradientDrawable().apply {
         setColor(Color.argb(242, 6, 46, 38))
@@ -3255,7 +3265,7 @@ private class SmartMarkerView(context: Context) : View(context) {
         super.onDraw(canvas)
         val cx = width / 2f
         val cy = height / 2f
-        val radius = 12f * density
+        val radius = 8.5f * density
         paint.style = Paint.Style.FILL
         paint.color = when {
             isDisabledPoint -> Color.rgb(100, 116, 139)
@@ -3281,7 +3291,7 @@ private class SmartMarkerView(context: Context) : View(context) {
             canvas.drawCircle(cx, cy, radius * 0.7f, paint)
         }
         canvas.drawCircle(cx, cy, radius, stroke)
-        val extent = 17f * density
+        val extent = 13f * density
         canvas.drawLine(cx - extent, cy, cx - radius, cy, stroke)
         canvas.drawLine(cx + radius, cy, cx + extent, cy, stroke)
         canvas.drawLine(cx, cy - extent, cx, cy - radius, stroke)
