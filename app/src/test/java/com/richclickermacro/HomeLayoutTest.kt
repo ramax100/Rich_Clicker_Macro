@@ -132,6 +132,11 @@ class HomeLayoutTest {
     fun versionLabelIsShown() {
         val activity = Robolectric.buildActivity(MainActivity::class.java).create().resume().get()
         val all = texts(activity.window.decorView)
-        assertTrue(all.any { it.contains("0.9.15") })
+        // Jangan hardcode nomor versi (mudah basi). Pakai versionName aktual
+        // sebagai satu-satunya sumber kebenaran.
+        val versionName = activity.packageManager
+            .getPackageInfo(activity.packageName, 0).versionName.orEmpty()
+        assertTrue(versionName.isNotEmpty())
+        assertTrue(all.any { it.contains(versionName) })
     }
 }
