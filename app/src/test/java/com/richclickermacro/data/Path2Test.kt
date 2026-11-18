@@ -20,24 +20,18 @@ class Path2Test {
     )
 
     @Test
-    fun clampsIntervalMinutes() {
-        assertEquals(1, Path2Config.sanitizeMinutes(0))
-        assertEquals(1, Path2Config.sanitizeMinutes(-30))
-        assertEquals(10, Path2Config.sanitizeMinutes(10))
-        assertEquals(720, Path2Config.sanitizeMinutes(5_000))
+    fun clampsEveryLoops() {
+        assertEquals(1, Path2Config.sanitizeLoops(0))
+        assertEquals(1, Path2Config.sanitizeLoops(-30))
+        assertEquals(10, Path2Config.sanitizeLoops(10))
+        assertEquals(Path2Config.MAX_EVERY_LOOPS, Path2Config.sanitizeLoops(10_000_000))
     }
 
     @Test
-    fun convertsMinutesToMillis() {
-        assertEquals(600_000L, Path2Config(intervalMinutes = 10).intervalMs)
-        assertEquals(60_000L, Path2Config(intervalMinutes = 1).intervalMs)
-    }
-
-    @Test
-    fun defaultsToTenMinutesDisabled() {
+    fun defaultsToTenLoopsDisabled() {
         val config = Path2Config()
         assertFalse(config.enabled)
-        assertEquals(10, config.intervalMinutes)
+        assertEquals(10, config.everyLoops)
         assertTrue(config.points.isEmpty())
     }
 

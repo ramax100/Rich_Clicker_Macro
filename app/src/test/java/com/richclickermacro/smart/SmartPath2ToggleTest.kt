@@ -74,7 +74,7 @@ class SmartPath2ToggleTest {
         store.save(
             Path2Config(
                 enabled = false,
-                intervalMinutes = 10,
+                everyLoops = 10,
                 points = listOf(
                     Path2Point(
                         id = 1L,
@@ -131,15 +131,9 @@ class SmartPath2ToggleTest {
     @Test
     fun whileOffPath2NeverJumpsIntoTHeClassicRun() {
         seedPoint()
-        // Timer Jalur 2 sudah lewat jauh dari intervalnya.
-        val schedule = field(controller, "path2Schedule")!!
-        val resume = schedule.javaClass.getDeclaredMethod("resume", Long::class.javaPrimitiveType)
-            .apply { isAccessible = true }
-        resume.invoke(schedule, 0L)
-        val now = android.os.SystemClock.elapsedRealtime()
+        // Saklar OFF: berapa pun putaran Jalur 1, Jalur 2 tidak boleh jalan.
         val due = call("path2Due") as Boolean
         assertFalse("Jalur 2 OFF tidak boleh menyela macro biasa", due)
-        assertTrue("timer Jalur 2 tetap diam selama OFF", now >= 0L)
     }
 
     @Test
@@ -272,17 +266,13 @@ class SmartPath2ToggleTest {
     }
 
     @Test
-    fun turningItBackOnRestartsTheCountdownFromZero() {
+    fun turningItOnDoesNotFireUntilEnoughLoops() {
         seedPoint()
         call("setPath2Enabled", true)
         shadowOf(Looper.getMainLooper()).idle()
-        val schedule = field(controller, "path2Schedule")!!
-        val elapsed = schedule.javaClass.getDeclaredMethod("elapsedMs", Long::class.javaPrimitiveType)
-            .apply { isAccessible = true }
-        val before = elapsed.invoke(schedule, android.os.SystemClock.elapsedRealtime()) as Long
-        call("setPath2Enabled", false)
-        val afterOff = elapsed.invoke(schedule, android.os.SystemClock.elapsedRealtime()) as Long
-        assertEquals("timer harus nol saat OFF", 0L, afterOff)
-        assertTrue("timer sempat berjalan sebelum dimatikan", before >= 0L)
+        // Baru dinyalakan dan Jalur 1 belum menyelesaikan putaran apa pun:
+        // Jalur 2 belum boleh jalan.
+        assertFalse("J2 tidak boleh langsung jalan sebelum cukup putaran", call("path2Due") as Boolean)
+        assertTrue("saklar ON tersimpan", Path2Store(service).load().enabled)
     }
 }

@@ -56,15 +56,18 @@ data class Path2Point(
  */
 data class Path2Config(
     val enabled: Boolean = false,
-    val intervalMinutes: Int = DEFAULT_INTERVAL_MINUTES,
+    /**
+     * Jalur 2 dipicu oleh JUMLAH PUTARAN Jalur 1, bukan waktu. Setelah Jalur 1
+     * menyelesaikan sebanyak ini putaran, Jalur 2 berjalan (titik 1 → terakhir),
+     * lalu kembali ke Jalur 1, dan seterusnya.
+     */
+    val everyLoops: Int = DEFAULT_EVERY_LOOPS,
     val points: List<Path2Point> = emptyList()
 ) {
-    val intervalMs: Long get() = intervalMinutes.toLong() * 60_000L
-
     companion object {
-        const val MIN_INTERVAL_MINUTES = 1
-        const val MAX_INTERVAL_MINUTES = 720
-        const val DEFAULT_INTERVAL_MINUTES = 10
+        const val MIN_EVERY_LOOPS = 1
+        const val MAX_EVERY_LOOPS = 100_000
+        const val DEFAULT_EVERY_LOOPS = 10
 
         /**
          * Jumlah titik Jalur 2 tidak dibatasi. Android sendiri yang menjadi batas
@@ -73,8 +76,8 @@ data class Path2Config(
          */
         const val MANY_POINTS_WARNING = 20
 
-        fun sanitizeMinutes(value: Int): Int =
-            value.coerceIn(MIN_INTERVAL_MINUTES, MAX_INTERVAL_MINUTES)
+        fun sanitizeLoops(value: Int): Int =
+            value.coerceIn(MIN_EVERY_LOOPS, MAX_EVERY_LOOPS)
     }
 }
 
@@ -189,12 +192,12 @@ class Path2Store(context: Context) {
     private val preferences = context.getSharedPreferences(PREFERENCES_NAME, Context.MODE_PRIVATE)
 
     fun load(): Path2Config {
-        val minutes = Path2Config.sanitizeMinutes(
-            preferences.getInt(KEY_INTERVAL_MINUTES, Path2Config.DEFAULT_INTERVAL_MINUTES)
+        val loops = Path2Config.sanitizeLoops(
+            preferences.getInt(KEY_EVERY_LOOPS, Path2Config.DEFAULT_EVERY_LOOPS)
         )
         return Path2Config(
             enabled = preferences.getBoolean(KEY_ENABLED, false),
-            intervalMinutes = minutes,
+            everyLoops = loops,
             points = Path2Format.decode(preferences.getString(KEY_POINTS, null))
         )
     }
@@ -202,7 +205,7 @@ class Path2Store(context: Context) {
     fun save(config: Path2Config) {
         preferences.edit()
             .putBoolean(KEY_ENABLED, config.enabled)
-            .putInt(KEY_INTERVAL_MINUTES, Path2Config.sanitizeMinutes(config.intervalMinutes))
+            .putInt(KEY_EVERY_LOOPS, Path2Config.sanitizeLoops(config.everyLoops))
             .putString(KEY_POINTS, Path2Format.encode(config.points))
             .apply()
     }
@@ -210,7 +213,7 @@ class Path2Store(context: Context) {
     private companion object {
         const val PREFERENCES_NAME = "jalur_2_preferences"
         const val KEY_ENABLED = "enabled"
-        const val KEY_INTERVAL_MINUTES = "interval_minutes"
+        const val KEY_EVERY_LOOPS = "every_loops"
         const val KEY_POINTS = "points"
     }
 }
