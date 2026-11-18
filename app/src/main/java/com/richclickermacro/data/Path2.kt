@@ -51,8 +51,9 @@ data class Path2Point(
 }
 
 /**
- * Jalur 2: rangkaian titik kedua pada mode Multi Smart Click. Dipicu waktu, lalu
- * tiap titiknya menunggu warna pixel yang cocok sebelum diklik.
+ * Jalur 2: rangkaian titik kedua pada mode Multi Smart Click. Dipicu oleh jumlah
+ * putaran Jalur 1 (bukan waktu), lalu tiap titiknya menunggu warna pixel yang
+ * cocok sebelum diklik.
  */
 data class Path2Config(
     val enabled: Boolean = false,

@@ -82,6 +82,9 @@ class ClickOverlayController(
     fun show(profile: MacroProfile) {
         dismissDelayDialog()
         stopClicking()
+        // Editor dibuka ulang: marker selalu kembali tampil, selaras dengan label
+        // tombolnya yang dibangun ulang ke keadaan "tampil".
+        markersHidden = false
         if (!removeAllTargets()) {
             Toast.makeText(service, "Editor lama belum dapat dibersihkan", Toast.LENGTH_SHORT).show()
             return

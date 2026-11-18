@@ -2864,13 +2864,25 @@ class SmartOverlayController(
      */
     private fun toggleMarkers() {
         markersHidden = !markersHidden
-        setMarkersVisible(true)
-        setMarkersTouchable(true)
-        setPath2Visible(true)
-        setPath2Touchable(true)
+        // Saat macro berjalan, marker SELALU tersembunyi & pass-through karena ikut
+        // terekam screenshot (merusak pembacaan warna) dan bisa menghalangi sentuhan.
+        // Jadi jangan pernah menampilkannya kembali di tengah run; perubahan "tampil"
+        // baru berlaku setelah macro berhenti. Saat IDLE, terapkan sesuai flag.
+        if (runState == SmartRunState.IDLE) {
+            setMarkersVisible(true)
+            setMarkersTouchable(true)
+            setPath2Visible(true)
+            setPath2Touchable(true)
+        }
         updateHideMarkersButton()
-        toast(if (markersHidden) "Titik disembunyikan." else "Titik ditampilkan.")
-        MacroDiagnostics.record(service, "smart_markers_hidden", markersHidden.toString())
+        toast(
+            when {
+                markersHidden -> "Titik disembunyikan."
+                runState != SmartRunState.IDLE -> "Titik akan tampil lagi setelah macro berhenti."
+                else -> "Titik ditampilkan."
+            }
+        )
+        MacroDiagnostics.record(service, "smart_markers_hidden", "$markersHidden running=${runState != SmartRunState.IDLE}")
     }
 
     private fun updateHideMarkersButton() {
