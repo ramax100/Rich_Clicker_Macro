@@ -600,9 +600,11 @@ class SmartOverlayController(
     private fun path2Due(): Boolean {
         if (!path2Config.enabled) return false
         if (path2Markers.none { it.point.isReady }) return false
-        // Jalur 2 baru boleh mulai setelah Jalur 1 dianggap selesai satu siklus
-        // penuh (sampai titik terakhir), bukan hanya karena timer jatuh tempo.
-        if (engine?.hasCompletedFirstCycle() != true) return false
+        // Jalur 2 baru boleh mulai setelah Jalur 1 benar-benar berjalan (sudah
+        // mengeklik). Dulu disyaratkan satu putaran penuh, tetapi bila ada titik
+        // yang warnanya tak pernah cocok, urutan J1 mandek dan J2 tak pernah jalan.
+        // Cukup "J1 sudah mulai" + timer jatuh tempo.
+        if (engine?.hasStartedRunning() != true) return false
         return path2Schedule.isDue(SystemClock.elapsedRealtime(), path2Config.intervalMs)
     }
 

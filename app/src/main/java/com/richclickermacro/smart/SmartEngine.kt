@@ -69,15 +69,16 @@ class SmartEngine(profile: SmartProfile) {
     val loopCount: Int get() = completedLoops
 
     /**
-     * Benar bila Jalur 1 sudah menjalankan satu siklus penuh. Jalur 2 memakai ini
-     * supaya tidak mulai sebelum J1 dianggap selesai sampai titik terakhir.
-     *  - SEQUENCE: satu putaran penuh (1 -> titik terakhir) sudah selesai.
-     *  - ANY: tidak ada "titik terakhir" yang pasti, jadi cukup minimal satu aksi
-     *    terkirim agar J2 tidak terkunci selamanya di mode ini.
+     * Benar bila Jalur 1 sudah benar-benar berjalan (minimal satu aksi terkirim).
+     *
+     * Dulu ini mensyaratkan satu PUTARAN PENUH (completedLoops >= 1) di mode
+     * SEQUENCE. Masalahnya: titik hanya menembak saat kondisi/warnanya cocok, jadi
+     * bila satu titik tidak pernah cocok, urutan mandek di situ dan J1 tidak pernah
+     * "sampai titik terakhir" — akibatnya J2 tidak pernah jalan. Sekarang cukup
+     * J1 sudah mulai mengeklik (satu aksi), sehingga J2 tetap urut setelah J1
+     * aktif tanpa terkunci menunggu putaran penuh yang mungkin tak pernah terjadi.
      */
-    fun hasCompletedFirstCycle(): Boolean =
-        if (sanitized.orderMode == SmartOrderMode.SEQUENCE) completedLoops >= 1
-        else totalActions >= 1
+    fun hasStartedRunning(): Boolean = totalActions >= 1
 
     private class PointState {
         var baseline: Int? = null
