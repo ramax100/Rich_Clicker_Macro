@@ -29,8 +29,6 @@ import com.richclickermacro.accessibility.AutoClickAccessibilityService
 import com.richclickermacro.data.MacroPoint
 import com.richclickermacro.data.Path2Config
 import com.richclickermacro.data.Path2Point
-import com.richclickermacro.data.Path2Format
-import com.richclickermacro.data.Path2Schedule
 import com.richclickermacro.data.Path2Store
 import com.richclickermacro.data.PointActionType
 import com.richclickermacro.diagnostics.MacroDiagnostics
@@ -61,21 +59,16 @@ class SmartOverlayController(
     private val holders = mutableListOf<SmartHolder>()
     private val path2Markers = mutableListOf<Path2Holder>()
     private val path2Store = Path2Store(service)
-    private val path2Schedule = Path2Schedule()
     private var path2Config = Path2Config()
     private var path2Index = 0
     private var path2RepeatIndex = 0
     private var selectedPath2Index = -1
     private var isPath2Open = false
     /**
-     * Jalur 2 "bersenjata": timer sudah jatuh tempo, TAPI J2 belum dimulai karena
-     * harus menunggu Jalur 1 menyelesaikan siklus sampai titik terakhir dulu.
+     * Patokan jumlah putaran Jalur 1 saat Jalur 2 terakhir selesai (atau saat mulai).
+     * Jalur 2 berjalan lagi ketika loopCount Jalur 1 mencapai baseline + everyLoops.
      */
-    private var path2Armed = false
-    /** Nilai progres J1 (loop untuk SEQUENCE, aksi untuk ANY) saat J2 di-arm. */
-    private var path2ArmedProgress = 0
-    /** Kapan J2 di-arm (elapsedRealtime), untuk jaring pengaman anti-macet. */
-    private var path2ArmedAtMs = 0L
+    private var path2LoopBaseline = 0
 
     private var currentProfile: SmartProfile? = null
     /** When the current colour capture started, so a stuck latch can be released. */
@@ -124,7 +117,7 @@ class SmartOverlayController(
     private lateinit var path2Button: Button
     private lateinit var path2Panel: LinearLayout
     private lateinit var path2ToggleButton: Button
-    private lateinit var path2MinutesButton: Button
+    private lateinit var path2LoopsButton: Button
     private lateinit var path2StatusLabel: TextView
     private lateinit var addPath2Button: Button
     private lateinit var removePath2Button: Button
@@ -205,12 +198,9 @@ class SmartOverlayController(
         // editor does not come back with permanently disabled buttons.
         capturingColor = false
         toolbarHiddenForCapture = false
-        path2Schedule.pause(SystemClock.elapsedRealtime())
         path2Index = 0
         path2RepeatIndex = 0
-        path2Armed = false
-        path2ArmedProgress = 0
-        path2ArmedAtMs = 0L
+        path2LoopBaseline = 0
         pickForPath2 = false
         reopenPath2AfterPick = false
         removePicker()
@@ -296,7 +286,7 @@ class SmartOverlayController(
         selectedIndex = 0
         selectedPath2Index = -1
         isPath2Open = false
-        path2Schedule.reset()
+        path2LoopBaseline = 0
         isAdvancedOpen = false
         isCollapsed = false
         disposing = false
@@ -378,10 +368,7 @@ class SmartOverlayController(
         // Marker Jalur 2 juga jendela kita: harus hilang agar tidak ikut terekam.
         setPath2Touchable(false)
         setPath2Visible(false)
-        path2Schedule.reset()
-        path2Armed = false
-        path2ArmedProgress = 0
-        path2ArmedAtMs = 0L
+        path2LoopBaseline = 0
         path2Index = 0
         applyKeepScreenOn(runnable.keepScreenOn)
         service.startMemorySampling()
@@ -396,7 +383,6 @@ class SmartOverlayController(
         if (runnable.countdownSeconds > 0) {
             countdown(runnable.countdownSeconds, generation)
         } else {
-            path2ResumeClock()
             scheduleScan(generation, 0L)
         }
     }
@@ -405,7 +391,6 @@ class SmartOverlayController(
         if (runState != SmartRunState.COUNTDOWN || generation != runGeneration) return
         if (remaining <= 0) {
             runState = SmartRunState.RUNNING
-            path2ResumeClock()
             updateUi()
             scheduleScan(generation, 0L)
             return
@@ -421,16 +406,7 @@ class SmartOverlayController(
 
     private fun scan(generation: Long) {
         if (generation != runGeneration || runState != SmartRunState.RUNNING) return
-        // Jaminan: selama macro berjalan dan Jalur 2 menyala dengan titik siap,
-        // jam Jalur 2 harus berjalan. Ini menutup celah urutan (mis. Jalur 2
-        // dinyalakan di saat transisi) yang membuat timer tidak pernah mulai dan
-        // Jalur 2 "tidak pernah jatuh tempo". resume() bersifat idempoten.
-        if (path2Config.enabled && !path2Schedule.isRunning &&
-            path2Markers.any { it.point.isReady }
-        ) {
-            path2Schedule.resume(SystemClock.elapsedRealtime())
-        }
-        // Jalur 2 diperiksa di detak loop smart: murni waktu, tanpa membaca warna.
+        // Jalur 2 dipicu oleh jumlah putaran Jalur 1 (bukan waktu): dicek tiap detak.
         if (path2Due()) {
             beginPath2(generation)
             return
@@ -604,7 +580,7 @@ class SmartOverlayController(
         path2Config = path2Store.load()
         path2Config.points.forEach { point -> addPath2Marker(point) }
         relabelPath2()
-        path2Schedule.reset()
+        path2LoopBaseline = 0
         path2Index = 0
         selectedPath2Index = if (path2Markers.isEmpty()) -1 else 0
         if (::path2Panel.isInitialized) {
@@ -612,51 +588,28 @@ class SmartOverlayController(
         }
     }
 
-    /** Progres Jalur 1: jumlah putaran penuh (SEQUENCE) atau jumlah aksi (ANY). */
-    private fun path2Progress(): Int {
-        val active = engine ?: return 0
-        return if (active.isSequenceMode) active.loopCount else active.actionCount
-    }
+    /** Jumlah putaran penuh Jalur 1 sejauh ini (0 bila belum berjalan). */
+    private fun path1Loops(): Int = engine?.loopCount ?: 0
+
+    /** Sisa putaran Jalur 1 sebelum Jalur 2 berjalan lagi. */
+    private fun path2LoopsRemaining(): Int =
+        (path2LoopBaseline + path2Config.everyLoops - path1Loops()).coerceAtLeast(0)
 
     /**
-     * Logika Jalur 2 dua tahap, dengan jaring pengaman anti-macet:
-     *  1. Saat timer jatuh tempo, J2 di-"arm" (bersenjata) — TAPI belum mulai. Kita
-     *     catat progres dan waktu Jalur 1 saat itu.
-     *  2. J2 jalan saat Jalur 1 menuntaskan siklusnya (SEQUENCE: maju satu putaran
-     *     sampai titik terakhir; ANY: satu aksi berikutnya) — di kondisi NORMAL.
-     *  3. Jaring pengaman: bila Jalur 1 MANDEK (mis. layar pindah ke area lain
-     *     sehingga titik J1 tak pernah menemukan warnanya, jadi loopCount tak naik),
-     *     J2 TETAP dijalankan setelah tenggang [PATH2_ARM_GRACE_MS]. Tanpa ini, J2
-     *     tidak pernah jalan saat J1 tidak berputar.
+     * Pemicu Jalur 2 BERBASIS PUTARAN, bukan waktu.
+     *
+     * Setelah Jalur 1 menyelesaikan [Path2Config.everyLoops] putaran sejak terakhir
+     * (dicatat di [path2LoopBaseline]), Jalur 2 dijalankan (titik 1 → terakhir),
+     * lalu kembali ke Jalur 1 dan menghitung lagi. Bila Jalur 1 mandek (mis. layar
+     * pindah ke area lain sehingga titik J1 tak menemukan warnanya), loopCount tidak
+     * bertambah, jadi Jalur 2 dengan sendirinya menunggu sampai putaran tercapai —
+     * ini memang perilaku yang diinginkan (tidak lagi dipaksa oleh timer).
      */
     private fun path2Due(): Boolean {
         if (!path2Config.enabled) return false
         if (path2Markers.none { it.point.isReady }) return false
         if (engine == null) return false
-
-        val now = SystemClock.elapsedRealtime()
-        if (!path2Armed) {
-            if (!path2Schedule.isDue(now, path2Config.intervalMs)) return false
-            // Timer jatuh tempo: senjatai J2, catat progres & waktu J1, lalu tunggu.
-            path2Armed = true
-            path2ArmedProgress = path2Progress()
-            path2ArmedAtMs = now
-            MacroDiagnostics.record(service, "smart_jalur2_armed", "progress=$path2ArmedProgress")
-            return false
-        }
-        // Kondisi normal: J1 sudah menuntaskan satu siklus sejak di-arm.
-        if (path2Progress() > path2ArmedProgress) return true
-        // Jaring pengaman: J1 mandek (mis. di area lain) → jalankan J2 agar tidak macet.
-        if (now - path2ArmedAtMs >= PATH2_ARM_GRACE_MS) {
-            MacroDiagnostics.record(service, "smart_jalur2_grace_release", "waited=${now - path2ArmedAtMs}")
-            return true
-        }
-        return false
-    }
-
-    private fun path2ResumeClock() {
-        if (!path2Config.enabled || path2Markers.isEmpty()) return
-        path2Schedule.resume(SystemClock.elapsedRealtime())
+        return path1Loops() >= path2LoopBaseline + path2Config.everyLoops
     }
 
     private fun addPath2Marker(point: Path2Point): Boolean {
@@ -919,11 +872,8 @@ class SmartOverlayController(
             runState == SmartRunState.PATH2 ->
                 "Jalur 2 ON • jalan titik ${path2Index + 1}/${path2Markers.size} • J2 untuk stop"
             runState == SmartRunState.RUNNING ->
-                "Jalur 2 ON • tiap ${path2Config.intervalMinutes} mnt • sisa " +
-                    Path2Format.formatRemaining(
-                        path2Schedule.remainingMs(SystemClock.elapsedRealtime(), path2Config.intervalMs)
-                    )
-            else -> "Jalur 2 ON • $ready/${path2Markers.size} siap • tiap ${path2Config.intervalMinutes} mnt"
+                "Jalur 2 ON • tiap ${path2Config.everyLoops} putaran • sisa ${path2LoopsRemaining()} putaran"
+            else -> "Jalur 2 ON • $ready/${path2Markers.size} siap • tiap ${path2Config.everyLoops} putaran"
         }
         if (path2StatusLabel.text != text) path2StatusLabel.text = text
     }
@@ -969,7 +919,6 @@ class SmartOverlayController(
         path2Config = path2Config.copy(enabled = enabled)
         path2Store.save(path2Config)
         if (!enabled) {
-            path2Schedule.reset()
             if (runState == SmartRunState.PATH2) {
                 // Hentikan rangkaian Jalur 2 sekarang juga, lalu lanjutkan macro biasa.
                 finishPath2(runGeneration)
@@ -978,7 +927,9 @@ class SmartOverlayController(
                 toast("Jalur 2 dimatikan.")
             }
         } else {
-            if (runState == SmartRunState.RUNNING) path2ResumeClock()
+            // Mulai hitung putaran dari sekarang supaya menyalakan di tengah run
+            // tidak langsung memicu Jalur 2.
+            path2LoopBaseline = path1Loops()
             toast("Jalur 2 dinyalakan.")
         }
         MacroDiagnostics.record(service, "smart_jalur2_toggle", if (enabled) "on" else "off")
@@ -998,32 +949,32 @@ class SmartOverlayController(
         togglePath2Panel()
     }
 
-    private fun changePath2Minutes(delta: Int) {
+    private fun changePath2Loops(delta: Int) {
         if (isRunning()) return
         path2Config = path2Config.copy(
-            intervalMinutes = Path2Config.sanitizeMinutes(path2Config.intervalMinutes + delta)
+            everyLoops = Path2Config.sanitizeLoops(path2Config.everyLoops + delta)
         )
         path2Store.save(path2Config)
         updateUi()
     }
 
-    private fun editPath2Minutes() {
+    private fun editPath2Loops() {
         if (isRunning()) return
         val input = EditText(service).apply {
             inputType = InputType.TYPE_CLASS_NUMBER
-            setText(path2Config.intervalMinutes.toString())
+            setText(path2Config.everyLoops.toString())
             setSelection(text.length)
         }
-        val minimum = Path2Config.MIN_INTERVAL_MINUTES
-        val maximum = Path2Config.MAX_INTERVAL_MINUTES
+        val minimum = Path2Config.MIN_EVERY_LOOPS
+        val maximum = Path2Config.MAX_EVERY_LOOPS
         showNumberDialog(
-            title = "Waktu Jalur 2 (menit)",
-            message = "Jalur 2 dijalankan setelah smart click berjalan selama $minimum–$maximum menit.",
+            title = "Jalur 2 tiap berapa putaran",
+            message = "Jalur 2 dijalankan setiap Jalur 1 menyelesaikan sekian putaran ($minimum–$maximum).",
             input = input,
             min = minimum,
             max = maximum
-        ) { minutes ->
-            path2Config = path2Config.copy(intervalMinutes = minutes)
+        ) { loops ->
+            path2Config = path2Config.copy(everyLoops = loops)
             path2Store.save(path2Config)
             updateUi()
         }
@@ -1198,10 +1149,7 @@ class SmartOverlayController(
     private fun beginPath2(generation: Long) {
         if (runState != SmartRunState.RUNNING) return
         if (path2Markers.none { it.point.isReady }) return
-        // J2 dimulai: lepas status bersenjata agar siklus arm berikutnya bersih.
-        path2Armed = false
         handler.removeCallbacksAndMessages(null)
-        path2Schedule.pause(SystemClock.elapsedRealtime())
         runState = SmartRunState.PATH2
         path2Index = nextReadyPath2Index(0)
         if (path2Index < 0) {
@@ -1210,7 +1158,7 @@ class SmartOverlayController(
         }
         MacroDiagnostics.record(
             service, "smart_jalur2_start",
-            "points=${path2Markers.size} setiapMenit=${path2Config.intervalMinutes}"
+            "points=${path2Markers.size} tiapPutaran=${path2Config.everyLoops} loop=${path1Loops()}"
         )
         updateUi()
         scanPath2(generation, 0L, SystemClock.elapsedRealtime())
@@ -1375,14 +1323,11 @@ class SmartOverlayController(
         if (generation != runGeneration || runState != SmartRunState.PATH2) return
         path2Index = 0
         path2RepeatIndex = 0
-        // Siklus J2 selesai: reset status bersenjata dan mulai hitung waktu dari nol.
-        path2Armed = false
-        path2ArmedProgress = 0
-        path2ArmedAtMs = 0L
-        path2Schedule.reset()
-        path2Schedule.resume(SystemClock.elapsedRealtime())
+        // Siklus J2 selesai: patok ulang hitungan putaran dari posisi J1 sekarang,
+        // lalu lanjutkan Jalur 1. Jalur 2 jalan lagi setelah everyLoops putaran.
+        path2LoopBaseline = path1Loops()
         runState = SmartRunState.RUNNING
-        MacroDiagnostics.record(service, "smart_jalur2_finish", "")
+        MacroDiagnostics.record(service, "smart_jalur2_finish", "baseline=$path2LoopBaseline")
         updateUi()
         scheduleScan(generation, PATH2_RESUME_GAP_MS)
     }
@@ -1869,14 +1814,14 @@ class SmartOverlayController(
         path2ToggleButton = smallButton("J2", "Aktifkan atau matikan Jalur 2") { togglePath2Enabled() }.apply {
             setTextSize(android.util.TypedValue.COMPLEX_UNIT_DIP, 10f)
         }
-        val path2Minus = smallButton("−", "Kurangi waktu Jalur 2 satu menit") { changePath2Minutes(-1) }
-        path2MinutesButton = smallButton("10 mnt", "Ketuk untuk mengetik waktu Jalur 2") { editPath2Minutes() }.apply {
+        val path2Minus = smallButton("−", "Kurangi satu putaran") { changePath2Loops(-1) }
+        path2LoopsButton = smallButton("10x", "Ketuk untuk mengetik jumlah putaran Jalur 1 sebelum Jalur 2") { editPath2Loops() }.apply {
             setTextSize(android.util.TypedValue.COMPLEX_UNIT_DIP, 10f)
         }
-        val path2Plus = smallButton("+", "Tambah waktu Jalur 2 satu menit") { changePath2Minutes(1) }
+        val path2Plus = smallButton("+", "Tambah satu putaran") { changePath2Loops(1) }
         path2TimeRow.addView(path2ToggleButton, LinearLayout.LayoutParams(0, dp(28f), 1f))
         path2TimeRow.addView(path2Minus, LinearLayout.LayoutParams(dp(26f), dp(28f)))
-        path2TimeRow.addView(path2MinutesButton, LinearLayout.LayoutParams(dp(52f), dp(28f)))
+        path2TimeRow.addView(path2LoopsButton, LinearLayout.LayoutParams(dp(52f), dp(28f)))
         path2TimeRow.addView(path2Plus, LinearLayout.LayoutParams(dp(26f), dp(28f)))
         path2Panel.addView(path2TimeRow, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(28f)))
 
@@ -2052,9 +1997,9 @@ class SmartOverlayController(
                 setColor(if (path2Config.enabled) Color.rgb(5, 150, 105) else Color.rgb(71, 85, 105))
                 cornerRadius = dp(10f).toFloat()
             }
-            path2MinutesButton.text = "${path2Config.intervalMinutes} mnt"
+            path2LoopsButton.text = "${path2Config.everyLoops}x"
             listOf(
-                path2MinutesButton, addPath2Button, removePath2Button,
+                path2LoopsButton, addPath2Button, removePath2Button,
                 path2ColorButton, path2ToleranceButton, path2HoldButton, path2RepeatButton
             ).forEach {
                 it.isEnabled = idle && !capturingColor && pickerView == null
@@ -2919,13 +2864,25 @@ class SmartOverlayController(
      */
     private fun toggleMarkers() {
         markersHidden = !markersHidden
-        setMarkersVisible(true)
-        setMarkersTouchable(true)
-        setPath2Visible(true)
-        setPath2Touchable(true)
+        // Saat macro berjalan, marker SELALU tersembunyi & pass-through karena ikut
+        // terekam screenshot (merusak pembacaan warna) dan bisa menghalangi sentuhan.
+        // Jadi jangan pernah menampilkannya kembali di tengah run; perubahan "tampil"
+        // baru berlaku setelah macro berhenti. Saat IDLE, terapkan sesuai flag.
+        if (runState == SmartRunState.IDLE) {
+            setMarkersVisible(true)
+            setMarkersTouchable(true)
+            setPath2Visible(true)
+            setPath2Touchable(true)
+        }
         updateHideMarkersButton()
-        toast(if (markersHidden) "Titik disembunyikan." else "Titik ditampilkan.")
-        MacroDiagnostics.record(service, "smart_markers_hidden", markersHidden.toString())
+        toast(
+            when {
+                markersHidden -> "Titik disembunyikan."
+                runState != SmartRunState.IDLE -> "Titik akan tampil lagi setelah macro berhenti."
+                else -> "Titik ditampilkan."
+            }
+        )
+        MacroDiagnostics.record(service, "smart_markers_hidden", "$markersHidden running=${runState != SmartRunState.IDLE}")
     }
 
     private fun updateHideMarkersButton() {
@@ -3250,14 +3207,6 @@ class SmartOverlayController(
          * seluruh rangkaian Jalur 2.
          */
         private const val PATH2_MATCH_TIMEOUT_MS = 20_000L
-
-        /**
-         * Setelah timer Jalur 2 jatuh tempo, J2 menunggu Jalur 1 menuntaskan satu
-         * siklus. Tetapi bila Jalur 1 mandek (mis. layar pindah ke area lain dan
-         * titik J1 tak kunjung menemukan warnanya), penantian dibatasi tenggang ini
-         * agar J2 tetap jalan dan tidak terlihat macet.
-         */
-        private const val PATH2_ARM_GRACE_MS = 3_000L
 
         /** Jeda bawaan antar titik Jalur 2 yang baru ditambahkan dari editor smart. */
         private const val DEFAULT_PATH2_GAP_MS = 1_000L

@@ -129,14 +129,10 @@ data class SmartProfile(
         const val MAX_CONFIRM_SAMPLES = 5
         const val DEFAULT_CONFIRM_SAMPLES = 2
 
-        /**
-         * 0 menonaktifkan pengaman diam. Default 0: macro TIDAK berhenti hanya
-         * karena sebuah titik belum menemukan warnanya — titik itu diam (tidak
-         * mengklik) sementara titik lain tetap bekerja. Pengguna bisa mengaktifkan
-         * batas waktu sendiri bila ingin macro berhenti otomatis saat lama diam.
-         */
+        /** 0 menonaktifkan pengaman diam. Default 120 dtk: macro berhenti bila
+         * tidak ada warna yang cocok selama itu (pengaman salah sentuh). */
         const val MAX_IDLE_TIMEOUT_SEC = 3_600
-        const val DEFAULT_IDLE_TIMEOUT_SEC = 0
+        const val DEFAULT_IDLE_TIMEOUT_SEC = 120
 
         const val MAX_ACTIONS_LIMIT = 1_000_000
         const val MAX_COUNTDOWN_SECONDS = 10
